@@ -1,0 +1,52 @@
+# ============================
+# ANDROID PROJECT IGNORE FILE
+# ============================
+
+# Build artifacts
+*/build/
+build/
+
+# APK / AAB / AAR outputs
+*.apk
+*.ap_
+*.aab
+*.aar
+
+# Local Gradle config
+.gradle/
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+captures/
+
+# Generated files
+bin/
+gen/
+out/
+
+# Signing keys (very important)
+*.keystore
+*.jks
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Kotlin/Java build cache
+/.kotlin/
+
+# ============================
+# USER-SPECIFIC IGNORES
+# ============================
+
+# Claude-related files
+/.claude/
+*CLAUDE.md
+
+# Billing summary (sensitive)
+*BILLING_FIX_SUMMARY.md

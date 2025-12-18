@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">PureStream</string>
+    
+    <!-- Store listing content -->
+    <string name="app_description_short">Family-friendly Plex streaming with advanced content filtering</string>
+    <string name="app_description_full">PureStream is a family-friendly Android TV streaming app that connects to your Plex media servers with advanced profanity filtering capabilities. Perfect for families who want to enjoy their media collection while maintaining appropriate content standards.\n\nKey Features:\n• Connect to multiple Plex servers\n• Advanced 4-level profanity filtering (None, Mild, Moderate, Strict)\n• Real-time subtitle analysis and filtering\n• Custom word filtering and whitelisting\n• Multiple user profiles with individual filter settings\n• Child and adult profile types\n• Seamless Android TV experience with D-pad navigation\n• High-quality video playback with subtitle support\n• Animal-themed profile avatars\n• Audio muting during filtered content\n\nPureStream gives parents peace of mind while allowing the whole family to enjoy their favorite movies and TV shows together.</string>
+    
+    <!-- Feature highlights for store listing -->
+    <string name="feature_plex_integration">Seamless Plex Server Integration</string>
+    <string name="feature_content_filtering">Advanced Content Filtering</string>
+    <string name="feature_family_profiles">Family-Friendly Profile Management</string>
+    <string name="feature_android_tv">Optimized for Android TV</string>
+    
+    <!-- Content rating justification -->
+    <string name="content_rating_justification">PureStream is designed as a family-friendly application that helps filter inappropriate content from media streams. The app itself contains no offensive material.</string>
+</resources>
