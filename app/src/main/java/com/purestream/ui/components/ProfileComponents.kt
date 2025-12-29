@@ -197,19 +197,20 @@ fun ProfileTypeButton(
     isSelected: Boolean,
     onClick: () -> Unit,
     isLocked: Boolean,
-    isPremium: Boolean = false
+    isPremium: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    
+
     Card(
-        modifier = Modifier
+        modifier = modifier
             .animatedPosterBorder(
                 shape = RoundedCornerShape(12.dp),
                 interactionSource = interactionSource
             )
             .tvIconFocusIndicator()
-            .clickable(enabled = !isLocked || isPremium) { 
-                if (!isLocked || isPremium) onClick() 
+            .clickable(enabled = !isLocked || isPremium) {
+                if (!isLocked || isPremium) onClick()
             },
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer 

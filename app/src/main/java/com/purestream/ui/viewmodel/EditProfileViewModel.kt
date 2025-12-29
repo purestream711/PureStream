@@ -1,4 +1,5 @@
 package com.purestream.ui.viewmodel
+import android.content.Context
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,13 +22,14 @@ data class EditProfileState(
     val availableLibraries: List<PlexLibrary> = emptyList(),
     val isLoading: Boolean = true,
     val isUpdating: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val isDefaultProfile: Boolean = false
 )
 
 class EditProfileViewModel(
-    private val plexRepository: PlexRepository = PlexRepository(),
     private val context: android.content.Context,
     private val profileId: String,
+    private val plexRepository: PlexRepository = PlexRepository(context),
     private val profileRepository: ProfileRepository = ProfileRepository(context)
 ) : ViewModel() {
     
@@ -37,22 +39,7 @@ class EditProfileViewModel(
     private val authRepository = PlexAuthRepository(context)
     
     // Same avatar images as ProfileViewModel
-    val avatarImages = listOf(
-        "bear_avatar",
-        "beaver_avatar", 
-        "cat_avatar",
-        "cheetah_avatar",
-        "deer_avatar",
-        "dog_avatar",
-        "elephant_avatar",
-        "fox_avatar",
-        "giraffe_avatar",
-        "hedgehog_avatar",
-        "koala_avatar",
-        "lion_avatar",
-        "monkey_avatar",
-        "raccoon_avatar"
-    )
+    val avatarImages = AvatarConstants.AVATAR_IMAGES
     
     init {
         loadProfile()
@@ -71,6 +58,7 @@ class EditProfileViewModel(
                         profileType = profile.profileType,
                         profanityFilterLevel = profile.profanityFilterLevel,
                         selectedLibraries = profile.selectedLibraries,
+                        isDefaultProfile = profile.isDefaultProfile,
                         isLoading = false
                     )
                 } else {
@@ -165,7 +153,15 @@ class EditProfileViewModel(
             profile = currentProfile?.copy(profanityFilterLevel = level)
         )
     }
-    
+
+    fun updateIsDefaultProfile(isDefault: Boolean) {
+        val currentProfile = _uiState.value.profile
+        _uiState.value = _uiState.value.copy(
+            isDefaultProfile = isDefault,
+            profile = currentProfile?.copy(isDefaultProfile = isDefault)
+        )
+    }
+
     fun toggleLibrarySelection(libraryKey: String) {
         val currentSelection = _uiState.value.selectedLibraries
         val newSelection = if (currentSelection.contains(libraryKey)) {
@@ -220,11 +216,17 @@ class EditProfileViewModel(
                     avatarImage = currentState.selectedAvatarImage,
                     profileType = currentState.profileType,
                     profanityFilterLevel = currentState.profanityFilterLevel,
-                    selectedLibraries = currentState.selectedLibraries
+                    selectedLibraries = currentState.selectedLibraries,
+                    isDefaultProfile = currentState.isDefaultProfile
                 )
-                
+
                 profileRepository.updateProfile(updatedProfile)
-                
+
+                // If this is set as default profile, ensure only one profile is default
+                if (currentState.isDefaultProfile) {
+                    profileRepository.setDefaultProfile(updatedProfile.id)
+                }
+
                 _uiState.value = _uiState.value.copy(
                     profile = updatedProfile,
                     isUpdating = false

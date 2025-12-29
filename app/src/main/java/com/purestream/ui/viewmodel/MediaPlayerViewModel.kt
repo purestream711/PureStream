@@ -78,8 +78,8 @@ private const val SEEK_RETRY_DELAY_MS = 500L
 private const val TIMELINE_HIDE_DELAY_MS = 1500L
 
 class MediaPlayerViewModel(
-    private val context: android.content.Context? = null,
-    private val plexRepository: PlexRepository = PlexRepository()
+    private val context: android.content.Context,
+    private val plexRepository: PlexRepository = PlexRepository(context)
 ) : ViewModel() {
 
     private val profanityFilter = ProfanityFilter()
@@ -97,6 +97,11 @@ class MediaPlayerViewModel(
         WatchProgressRepository(AppDatabase.getDatabase(ctx), ctx)
     }
 
+    // Profile repository for level-up tracking
+    private val profileRepository: com.purestream.data.repository.ProfileRepository? = context?.let { ctx ->
+        com.purestream.data.repository.ProfileRepository(ctx)
+    }
+
     // Progress tracking state
     private var currentMediaRatingKey: String? = null
     private var currentMediaKey: String? = null
@@ -105,6 +110,12 @@ class MediaPlayerViewModel(
     private var progressUpdateJob: Job? = null
     private var lastProgressUpdateTime: Long = 0L
     private val PROGRESS_UPDATE_INTERVAL_MS = 15000L // Update every 15 seconds
+
+    // Level-up tracker state
+    private var currentProfileIdForTracking: String = ""
+    private val filteredWordsThisSession = mutableSetOf<Pair<Long, String>>()
+    private var wordsFilteredThisSessionCount: Int = 0
+    private var sessionStartingLevel: Int = 1
 
     // Store media objects for tracking (set before navigation)
     private var storedMovie: Movie? = null
@@ -247,7 +258,7 @@ class MediaPlayerViewModel(
                     
                     entry.copy(
                         originalText = cleanedText,
-                        filteredText = cleanUnicodeMarkers(entry.originalText),
+                        filteredText = entry.originalText,  // Keep Unicode markers for word tracking
                         hasProfanity = hasUnicodeMarkers,
                         detectedWords = if (hasUnicodeMarkers) extractWordsFromUnicodeMarkers(entry.originalText) else emptyList()
                     )
@@ -331,7 +342,62 @@ class MediaPlayerViewModel(
         // This ensures users don't see any artifacts in the subtitles
         return text.replace("\u200B", "").replace("\u200C", "")
     }
-    
+
+    /**
+     * Save session progress to database when exiting media player.
+     * Returns level-up information for celebration screen.
+     */
+    suspend fun saveSessionProgress(): LevelUpResult {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (currentProfileIdForTracking.isEmpty() || wordsFilteredThisSessionCount == 0) {
+                    return@withContext LevelUpResult(leveledUp = false)
+                }
+
+                val profile = profileRepository?.getProfileById(currentProfileIdForTracking)
+                profile?.let { currentProfile ->
+                    val newTotal = currentProfile.totalFilteredWordsCount + wordsFilteredThisSessionCount
+                    val levelInfo = com.purestream.utils.LevelCalculator.calculateLevel(newTotal)
+
+                    val updatedProfile = currentProfile.copy(
+                        totalFilteredWordsCount = newTotal,
+                        currentLevel = levelInfo.first,
+                        wordsFilteredThisLevel = levelInfo.second
+                    )
+
+                    profileRepository?.updateProfile(updatedProfile)
+
+                    val leveledUp = updatedProfile.currentLevel > sessionStartingLevel
+
+                    // Log session results
+                    android.util.Log.d(
+                        "MediaPlayerViewModel",
+                        "Session complete: ${wordsFilteredThisSessionCount} words filtered. " +
+                        "Level ${sessionStartingLevel} → ${updatedProfile.currentLevel}" +
+                        if (leveledUp) " 🎉 LEVEL UP!" else ""
+                    )
+
+                    return@withContext LevelUpResult(
+                        leveledUp = leveledUp,
+                        oldLevel = sessionStartingLevel,
+                        newLevel = updatedProfile.currentLevel,
+                        wordsFiltered = updatedProfile.totalFilteredWordsCount
+                    )
+                } ?: LevelUpResult(leveledUp = false)
+            } catch (e: Exception) {
+                android.util.Log.e("MediaPlayerViewModel", "Error saving session progress: ${e.message}", e)
+                LevelUpResult(leveledUp = false)
+            }
+        }
+    }
+
+    data class LevelUpResult(
+        val leveledUp: Boolean,
+        val oldLevel: Int = 0,
+        val newLevel: Int = 0,
+        val wordsFiltered: Int = 0
+    )
+
     fun regenerateSubtitlesWithNewLanguage(
         movie: Movie? = null,
         tvShow: TvShow? = null,
@@ -405,11 +471,39 @@ class MediaPlayerViewModel(
                 
                 // Check if the subtitle text contains Unicode markers (filtered content)
                 val rawDisplayText = currentEntry?.displayText
+
+                // DEBUG: Log raw text with character codes
+                if (rawDisplayText != null) {
+                    android.util.Log.d("MediaPlayerViewModel", "Raw subtitle: $rawDisplayText")
+                    android.util.Log.d("MediaPlayerViewModel", "Contains \\u200B: ${rawDisplayText.contains("\u200B")}")
+                    android.util.Log.d("MediaPlayerViewModel", "Contains \\u200C: ${rawDisplayText.contains("\u200C")}")
+                }
+
                 val hasUnicodeMarkers = rawDisplayText?.contains("\u200B") == true && rawDisplayText.contains("\u200C")
-                
+                android.util.Log.d("MediaPlayerViewModel", "hasUnicodeMarkers: $hasUnicodeMarkers")
+
+                // Track filtered words for level-up system (in memory only)
+                if (hasUnicodeMarkers && currentProfileIdForTracking.isNotEmpty()) {
+                    currentEntry?.let { entry ->
+                        val uniqueKey = Pair(entry.startTime, entry.displayText ?: "")
+                        if (!filteredWordsThisSession.contains(uniqueKey)) {
+                            filteredWordsThisSession.add(uniqueKey)
+                            // Extract actual words from Unicode markers
+                            val filteredWords = rawDisplayText?.let { extractWordsFromUnicodeMarkers(it) } ?: emptyList()
+                            val detectedWordCount = filteredWords.size
+                            if (detectedWordCount > 0) {
+                                wordsFilteredThisSessionCount += detectedWordCount
+                                android.util.Log.d("MediaPlayerViewModel",
+                                    "Filtered $detectedWordCount word(s): ${filteredWords.joinToString(", ")} " +
+                                    "(Session total: $wordsFilteredThisSessionCount)")
+                            }
+                        }
+                    }
+                }
+
                 // Clean the display text for user viewing (remove invisible markers)
                 val cleanDisplayText = rawDisplayText?.let { cleanUnicodeMarkers(it) }
-                
+
                 Pair(cleanDisplayText, hasUnicodeMarkers)
             } else {
                 // Only show subtitles during profanity when subtitles are disabled
@@ -417,11 +511,39 @@ class MediaPlayerViewModel(
                     entry.hasProfanity && positionMs >= entry.startTime && positionMs <= entry.endTime
                 }
                 val rawDisplayText = profanityEntry?.displayText
+
+                // DEBUG: Log raw text with character codes
+                if (rawDisplayText != null) {
+                    android.util.Log.d("MediaPlayerViewModel", "[Subs OFF] Raw subtitle: $rawDisplayText")
+                    android.util.Log.d("MediaPlayerViewModel", "[Subs OFF] Contains \\u200B: ${rawDisplayText.contains("\u200B")}")
+                    android.util.Log.d("MediaPlayerViewModel", "[Subs OFF] Contains \\u200C: ${rawDisplayText.contains("\u200C")}")
+                }
+
                 val hasUnicodeMarkers = rawDisplayText?.contains("\u200B") == true && rawDisplayText.contains("\u200C")
-                
+                android.util.Log.d("MediaPlayerViewModel", "[Subs OFF] hasUnicodeMarkers: $hasUnicodeMarkers")
+
+                // Track filtered words for level-up system (in memory only)
+                if (hasUnicodeMarkers && currentProfileIdForTracking.isNotEmpty()) {
+                    profanityEntry?.let { entry ->
+                        val uniqueKey = Pair(entry.startTime, entry.displayText ?: "")
+                        if (!filteredWordsThisSession.contains(uniqueKey)) {
+                            filteredWordsThisSession.add(uniqueKey)
+                            // Extract actual words from Unicode markers
+                            val filteredWords = rawDisplayText?.let { extractWordsFromUnicodeMarkers(it) } ?: emptyList()
+                            val detectedWordCount = filteredWords.size
+                            if (detectedWordCount > 0) {
+                                wordsFilteredThisSessionCount += detectedWordCount
+                                android.util.Log.d("MediaPlayerViewModel",
+                                    "Filtered $detectedWordCount word(s): ${filteredWords.joinToString(", ")} " +
+                                    "(Session total: $wordsFilteredThisSessionCount)")
+                            }
+                        }
+                    }
+                }
+
                 // Clean the display text for user viewing (remove invisible markers)
                 val cleanDisplayText = rawDisplayText?.let { cleanUnicodeMarkers(it) }
-                
+
                 Pair(cleanDisplayText, hasUnicodeMarkers)
             }
             
@@ -510,6 +632,30 @@ class MediaPlayerViewModel(
 
     fun setMediaPlayer(player: org.videolan.libvlc.MediaPlayer) {
         currentPlayer = player
+    }
+
+    /**
+     * Set the profile ID for word tracking and clear session data.
+     * Should be called when starting playback for a specific profile.
+     */
+    fun setProfileForWordTracking(profileId: String) {
+        currentProfileIdForTracking = profileId
+        filteredWordsThisSession.clear()
+        wordsFilteredThisSessionCount = 0
+
+        // Capture starting level for level-up detection on exit
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val profile = profileRepository?.getProfileById(profileId)
+                profile?.let {
+                    sessionStartingLevel = it.currentLevel
+                    android.util.Log.d("MediaPlayerViewModel",
+                        "Started word tracking for profile: ${it.name} (Level ${it.currentLevel})")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MediaPlayerViewModel", "Error loading profile for tracking: ${e.message}", e)
+            }
+        }
     }
 
     fun seekForward(seconds: Int = 10) {
@@ -962,6 +1108,82 @@ class MediaPlayerViewModel(
     }
 
     /**
+     * Set demo subtitle analysis for demo mode playback
+     */
+    fun setDemoSubtitleAnalysis(mutingTimestamps: List<TimeRange>) {
+        android.util.Log.d("MediaPlayerViewModel", "Setting demo subtitle analysis with ${mutingTimestamps.size} muting timestamps (will be synchronized)")
+
+        viewModelScope.launch {
+            // Create demo subtitle entries
+            // Use unicode markers for purple styling: \u200B (start) and \u200C (end) around the filtered word
+            val demoEntries = listOf(
+                SubtitleEntry(
+                    index = 1,
+                    startTime = 2000L,
+                    endTime = 4000L,
+                    originalText = "How fucking dare you!",
+                    filteredText = "How \u200Bfricking\u200C dare you!",
+                    hasProfanity = true,
+                    detectedWords = listOf("fuck")
+                )
+            )
+
+            val demoOriginalEntries = listOf(
+                SubtitleEntry(
+                    index = 1,
+                    startTime = 2000L,
+                    endTime = 4000L,
+                    originalText = "How fucking dare you!",
+                    filteredText = null,
+                    hasProfanity = true,
+                    detectedWords = listOf("fuck")
+                )
+            )
+            
+            // Synchronize muting timestamps to match the subtitle entry exactly
+            // This replicates the behavior of the real app where the entire subtitle line is muted
+            val synchronizedMutingTimestamps = listOf(
+                TimeRange(2000L, 4000L)
+            )
+
+            // Create ParsedSubtitle objects
+            val demoFilteredParsed = ParsedSubtitle(
+                entries = demoEntries,
+                totalProfanityEntries = 1,
+                profanityTimestamps = synchronizedMutingTimestamps
+            )
+
+            val demoOriginalParsed = ParsedSubtitle(
+                entries = demoOriginalEntries,
+                totalProfanityEntries = 1,
+                profanityTimestamps = synchronizedMutingTimestamps
+            )
+
+            val profanityStats = ProfanityStats(
+                totalEntries = 1,
+                profanityEntries = 1,
+                profanityPercentage = 100f,
+                detectedWords = mapOf("fuck" to 1),
+                profanityLevel = ProfanityLevel.HIGH
+            )
+
+            val filteredResult = FilteredSubtitleResult(
+                originalSubtitle = demoOriginalParsed,
+                filteredSubtitle = demoFilteredParsed,
+                mutingTimestamps = synchronizedMutingTimestamps,
+                profanityStats = profanityStats
+            )
+
+            _uiState.value = _uiState.value.copy(
+                filteredSubtitleResult = filteredResult,
+                hasAnalysis = true
+            )
+
+            android.util.Log.d("MediaPlayerViewModel", "Demo subtitle analysis set - audio muting synchronized to 2000-4000ms")
+        }
+    }
+
+    /**
      * Start tracking playback progress for a movie or episode
      */
     fun startProgressTracking(
@@ -1208,6 +1430,49 @@ class MediaPlayerViewModel(
 
         // Restart periodic updates
         startPeriodicProgressUpdates(movie, tvShow, episode)
+    }
+
+    /**
+     * Mark playback as 100% complete and save final progress
+     */
+    suspend fun completePlayback(
+        movie: Movie? = null,
+        tvShow: TvShow? = null,
+        episode: Episode? = null
+    ) {
+        val ratingKey = currentMediaRatingKey ?: return
+        val profileId = currentProfileId
+        val duration = currentMediaDuration
+
+        if (profileId.isEmpty() || watchProgressRepository == null) {
+            android.util.Log.w("MediaPlayerViewModel", "Cannot complete playback")
+            return
+        }
+
+        withContext(Dispatchers.IO) {
+            try {
+                // Save progress as 100% (position = duration)
+                watchProgressRepository?.saveProgress(
+                    profileId = profileId,
+                    ratingKey = ratingKey,
+                    contentType = if (movie != null) "movie" else "episode",
+                    contentTitle = movie?.title ?: episode?.title ?: "Unknown",
+                    position = duration,
+                    duration = duration,
+                    showTitle = tvShow?.title,
+                    seasonNumber = episode?.seasonNumber,
+                    episodeNumber = episode?.episodeNumber
+                )
+
+                android.util.Log.d("MediaPlayerViewModel", "✓ Marked complete: ${movie?.title ?: episode?.title}")
+
+                // Mark as watched on Plex
+                scrobbleContent()
+            } catch (e: Exception) {
+                android.util.Log.e("MediaPlayerViewModel", "Error completing playback: ${e.message}", e)
+            }
+            Unit
+        }
     }
 
     /**

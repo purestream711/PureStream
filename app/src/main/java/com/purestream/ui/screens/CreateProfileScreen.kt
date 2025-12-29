@@ -47,6 +47,9 @@ import com.purestream.ui.viewmodel.ProfileViewModel
 import com.purestream.ui.components.*
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
 import com.purestream.ui.theme.NetflixDarkGray
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -64,7 +67,9 @@ fun CreateProfileScreen(
     val uiState by profileViewModel.uiState.collectAsStateWithLifecycle()
     val nameFocusRequester = remember { FocusRequester() }
     val bearAvatarFocusRequester = remember { FocusRequester() }
-    
+    val adultProfileTypeFocusRequester = remember { FocusRequester() }
+    val defaultProfileFocusRequester = remember { FocusRequester() }
+
     LaunchedEffect(Unit) {
         nameFocusRequester.requestFocus()
     }
@@ -83,6 +88,7 @@ fun CreateProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
+            .padding(WindowInsets.navigationBars.asPaddingValues())
             .padding(32.dp)
     ) {
         LazyColumn(
@@ -166,19 +172,88 @@ fun CreateProfileScreen(
                             isSelected = uiState.profileType == ProfileType.ADULT,
                             onClick = { profileViewModel.updateProfileType(ProfileType.ADULT) },
                             isLocked = false,
-                            isPremium = isPremium
+                            isPremium = isPremium,
+                            modifier = Modifier
+                                .focusRequester(adultProfileTypeFocusRequester)
+                                .focusProperties {
+                                    down = defaultProfileFocusRequester
+                                }
                         )
                         ProfileTypeButton(
                             type = ProfileType.CHILD,
                             isSelected = uiState.profileType == ProfileType.CHILD,
                             onClick = { profileViewModel.updateProfileType(ProfileType.CHILD) },
                             isLocked = true,
-                            isPremium = isPremium
+                            isPremium = isPremium,
+                            modifier = Modifier
+                                .focusProperties {
+                                    down = defaultProfileFocusRequester
+                                }
                         )
                     }
                 }
             }
-            
+
+            // Default Profile Toggle
+            item {
+                ProfileSection(title = "Default Profile") {
+                    val defaultProfileInteractionSource = remember { MutableInteractionSource() }
+                    val isDefaultProfileFocused by defaultProfileInteractionSource.collectIsFocusedAsState()
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(defaultProfileFocusRequester)
+                            .focusProperties {
+                                up = adultProfileTypeFocusRequester
+                            }
+                            .focusable(interactionSource = defaultProfileInteractionSource)
+                            .then(
+                                if (isDefaultProfileFocused) {
+                                    Modifier.border(
+                                        width = 3.dp,
+                                        color = Color(0xFF8B5CF6),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        colors = CardDefaults.cardColors(
+                            containerColor = com.purestream.ui.theme.BackgroundSecondary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Automatically sign into profile on startup",
+                                fontSize = 14.sp,
+                                color = com.purestream.ui.theme.TextSecondary,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            Switch(
+                                checked = uiState.isDefaultProfile,
+                                onCheckedChange = { profileViewModel.updateIsDefaultProfile(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF8B5CF6),
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = Color(0xFF4B5563)
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
             // Profanity Filter Level
             item {
                 ProfileSection(title = "Content Filter Level") {

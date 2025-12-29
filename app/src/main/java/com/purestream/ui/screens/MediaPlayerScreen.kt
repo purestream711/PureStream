@@ -55,12 +55,22 @@ import com.purestream.ui.components.VLCMediaPlayer
 import com.purestream.ui.viewmodel.MediaPlayerViewModel
 import com.purestream.ui.viewmodel.SeekDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
 import com.purestream.ui.theme.animatedProfileBorder
 import com.purestream.utils.rememberIsMobile
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Rational
+import android.view.View
+import android.view.WindowInsetsController
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @Composable
 fun MediaPlayerScreen(
@@ -82,9 +92,10 @@ fun MediaPlayerScreen(
 ) {
     val context = LocalContext.current
     val isMobile = rememberIsMobile()
+    val coroutineScope = rememberCoroutineScope()
     // Use shared ViewModel if provided, otherwise create a new one
     val viewModel = mediaPlayerViewModel ?: viewModel { MediaPlayerViewModel(context) }
-    val playerState by viewModel.uiState.collectAsState()
+    val playerState by viewModel.uiState.collectAsStateWithLifecycle()
 
     // Retrieve stored media objects from ViewModel
     val storedMovie = remember { viewModel.getStoredMovie() }
@@ -98,20 +109,71 @@ fun MediaPlayerScreen(
 
     android.util.Log.d("MediaPlayerScreen", "Retrieved media objects: movie=${actualMovie?.title}, episode=${actualEpisode?.title}, tvShow=${actualTvShow?.title}")
 
-    // Force landscape orientation on mobile
+    // Picture-in-Picture state for mobile
+    var isInPipMode by remember { mutableStateOf(false) }
+
+    // Function to enter PiP mode (mobile only)
+    fun enterPipMode() {
+        if (!isMobile) return
+
+        val activity = context as? Activity ?: return
+
+        // Check if PiP is supported
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val hasPipFeature = activity.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+            if (!hasPipFeature) return
+
+            try {
+                // Calculate aspect ratio (16:9 standard for most videos)
+                val aspectRatio = Rational(16, 9)
+
+                val pipParams = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                    .build()
+
+                activity.enterPictureInPictureMode(pipParams)
+                android.util.Log.d("MediaPlayerScreen", "Entered PiP mode")
+            } catch (e: Exception) {
+                android.util.Log.e("MediaPlayerScreen", "Failed to enter PiP mode", e)
+            }
+        }
+    }
+
+    // Force landscape orientation and hide status bar on mobile
     LaunchedEffect(isMobile) {
         if (isMobile) {
             val activity = context as? Activity
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            activity?.let {
+                // Force landscape
+                it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+                // Hide status bar and navigation bar (fullscreen/immersive mode)
+                WindowCompat.setDecorFitsSystemWindows(it.window, false)
+                it.window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                )
+            }
         }
     }
-    
-    // Restore orientation when leaving screen (mobile only)
+
+    // Restore orientation and system UI when leaving screen (mobile only)
     DisposableEffect(isMobile) {
         onDispose {
             if (isMobile) {
                 val activity = context as? Activity
-                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                activity?.let {
+                    // Restore orientation
+                    it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
+                    // Restore system UI
+                    WindowCompat.setDecorFitsSystemWindows(it.window, true)
+                    it.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+                }
             }
         }
     }
@@ -126,13 +188,78 @@ fun MediaPlayerScreen(
     var retryCount by remember { mutableIntStateOf(0) }
     var currentVideoUrl by remember { mutableStateOf(videoUrl) }
     var isExiting by remember { mutableStateOf(false) }
-    
+
+    // Level-up celebration state
+    var showCelebration by remember { mutableStateOf(false) }
+    var levelUpData by remember { mutableStateOf<MediaPlayerViewModel.LevelUpResult?>(null) }
+
+    // Lock orientation to portrait when celebration shows (mobile only)
+    DisposableEffect(showCelebration, isMobile) {
+        val activity = context as? Activity
+        val originalOrientation = activity?.requestedOrientation
+
+        if (showCelebration && isMobile && activity != null) {
+            // Force portrait before showing celebration
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+
+        onDispose {
+            // Restore original orientation when celebration is dismissed
+            if (showCelebration && isMobile && activity != null && originalOrientation != null) {
+                activity.requestedOrientation = originalOrientation
+            }
+        }
+    }
+
     // Focus management for navigation
     val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
     
     // Player reference for LibVLC MediaPlayer
     var currentPlayer: VLCMediaPlayer? by remember { mutableStateOf(null) }
-    
+
+    // Detect PiP mode changes (mobile only)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE && isMobile) {
+                // User is leaving the app - enter PiP if playing
+                android.util.Log.d("MediaPlayerScreen", "ON_PAUSE detected - isPlaying: $isPlaying, isExiting: $isExiting")
+                if (isPlaying && !isExiting) {
+                    android.util.Log.d("MediaPlayerScreen", "Entering PiP mode")
+                    enterPipMode()
+                } else {
+                    android.util.Log.d("MediaPlayerScreen", "Skipping PiP - user is exiting or not playing")
+                }
+            }
+        }
+
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Monitor PiP mode state changes via configuration
+    if (isMobile && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+        val activity = context as? Activity
+
+        LaunchedEffect(configuration) {
+            activity?.let {
+                val inPip = it.isInPictureInPictureMode
+                if (isInPipMode != inPip) {
+                    isInPipMode = inPip
+                    android.util.Log.d("MediaPlayerScreen", "PiP mode changed: $isInPipMode")
+
+                    // When exiting PiP, show controls again
+                    if (!isInPipMode) {
+                        showControls = true
+                    }
+                }
+            }
+        }
+    }
+
     // Handle back button presses
     BackHandler {
         when {
@@ -187,10 +314,21 @@ fun MediaPlayerScreen(
                 }
             }
             currentPlayer = null
-            
-                // Exit to previous screen
-                android.util.Log.d("MediaPlayerScreen", "Calling onBackClick to exit")
-                onBackClick()
+
+                // Save session progress before exiting
+                coroutineScope.launch {
+                    val levelUpResult = viewModel.saveSessionProgress()
+                    if (levelUpResult.leveledUp) {
+                        android.util.Log.d("MediaPlayerScreen",
+                            "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                        levelUpData = levelUpResult
+                        showCelebration = true
+                    } else {
+                        // Exit to previous screen
+                        android.util.Log.d("MediaPlayerScreen", "Calling onBackClick to exit")
+                        onBackClick()
+                    }
+                }
             }
         }
     }
@@ -257,9 +395,12 @@ fun MediaPlayerScreen(
     LaunchedEffect(contentId, currentFilterLevel, playerState.hasAnalysis) {
         android.util.Log.d("MediaPlayerScreen", "Loading filtered subtitles with contentId: $contentId, filter level: $currentFilterLevel, hasAnalysis: ${playerState.hasAnalysis}")
         
-        if (contentId.isNotEmpty() && contentId != "unknown") {
+        // Skip loading for demo content as it's handled by MainActivity/ViewModel directly
+        if (contentId.isNotEmpty() && contentId != "unknown" && !contentId.startsWith("demo_")) {
             // Use contentId-based loading for analyzed subtitles
             viewModel.loadFilteredSubtitlesByContentId(contentId, currentFilterLevel)
+        } else if (contentId.startsWith("demo_")) {
+            android.util.Log.d("MediaPlayerScreen", "Skipping subtitle load for demo content (already set)")
         } else {
             android.util.Log.w("MediaPlayerScreen", "Invalid contentId provided: $contentId")
         }
@@ -311,9 +452,9 @@ fun MediaPlayerScreen(
         }
     }
     
-    // Auto-hide controls after 5 seconds of no interaction
-    LaunchedEffect(showControls) {
-        if (showControls) {
+    // Auto-hide controls after 5 seconds of no interaction (not in PiP mode)
+    LaunchedEffect(showControls, isInPipMode) {
+        if (showControls && !isInPipMode) {
             delay(5000) // Hide after 5 seconds
             showControls = false
         }
@@ -493,6 +634,33 @@ fun MediaPlayerScreen(
                         android.util.Log.d("MediaPlayerScreen", "Paused progress tracking")
                     }
                 },
+                onEnded = {
+                    android.util.Log.d("MediaPlayerScreen", "Video ended - marking complete and returning")
+
+                    coroutineScope.launch {
+                        // Mark as 100% complete
+                        viewModel.completePlayback(
+                            movie = actualMovie,
+                            tvShow = actualTvShow,
+                            episode = actualEpisode
+                        )
+
+                        // Stop progress tracking
+                        viewModel.stopProgressTracking(actualMovie, actualTvShow, actualEpisode)
+
+                        // Save session progress before exiting
+                        val levelUpResult = viewModel.saveSessionProgress()
+                        if (levelUpResult.leveledUp) {
+                            android.util.Log.d("MediaPlayerScreen",
+                                "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                            levelUpData = levelUpResult
+                            showCelebration = true
+                        } else {
+                            // Navigate back immediately
+                            onBackClick()
+                        }
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -559,8 +727,8 @@ fun MediaPlayerScreen(
             )
         }
 
-        // Player Controls
-        if (showControls) {
+        // Player Controls (hidden when in PiP mode)
+        if (showControls && !isInPipMode) {
             PlayerControls(
                 isPlaying = isPlaying,
                 currentPosition = playerState.currentPosition,
@@ -570,6 +738,7 @@ fun MediaPlayerScreen(
                 subtitleAlignment = subtitleAlignment,
                 subtitlesEnabled = playerState.subtitlesEnabled,
                 hasAnalysis = playerState.hasAnalysis, // Use live analysis state from ViewModel
+                isDemoContent = contentId.startsWith("demo_"), // Check if content is demo
                 focusRequester = focusRequester,
                 onPlayPause = {
                     currentPlayer?.let { player ->
@@ -592,13 +761,34 @@ fun MediaPlayerScreen(
                 onSubtitleToggle = {
                     viewModel.toggleSubtitles()
                 },
-                onBackClick = onBackClick,
+                onBackClick = {
+                    // Set exit flag to prevent PiP mode when user explicitly exits
+                    isExiting = true
+                    // Stop playback to ensure clean exit
+                    currentPlayer?.let { player ->
+                        player.pause()
+                        viewModel.onPlaybackStateChanged(false)
+                    }
+
+                    // Save session progress before exiting
+                    coroutineScope.launch {
+                        val levelUpResult = viewModel.saveSessionProgress()
+                        if (levelUpResult.leveledUp) {
+                            android.util.Log.d("MediaPlayerScreen",
+                                "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                            levelUpData = levelUpResult
+                            showCelebration = true
+                        } else {
+                            onBackClick()
+                        }
+                    }
+                },
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
         
-        // Gear Menu Dialog
-        if (showGearMenu) {
+        // Gear Menu Dialog (hidden when in PiP mode)
+        if (showGearMenu && !isInPipMode) {
             GearMenuDialog(
                 currentFilterLevel = currentFilterLevel,
                 subtitlesEnabled = playerState.subtitlesEnabled,
@@ -645,6 +835,19 @@ fun MediaPlayerScreen(
             )
         }
     }
+
+    // Show level-up celebration overlay when user levels up
+    if (showCelebration && levelUpData != null) {
+        LevelUpCelebrationScreen(
+            oldLevel = levelUpData!!.oldLevel,
+            newLevel = levelUpData!!.newLevel,
+            totalFilteredWords = levelUpData!!.wordsFiltered,
+            onDismiss = {
+                showCelebration = false
+                onBackClick()
+            }
+        )
+    }
 }
 
 @Composable
@@ -657,6 +860,7 @@ fun PlayerControls(
     subtitleAlignment: Float,
     subtitlesEnabled: Boolean,
     hasAnalysis: Boolean,
+    isDemoContent: Boolean = false,
     focusRequester: FocusRequester,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -690,7 +894,8 @@ fun PlayerControls(
             )
             
             // Analysis Status Padlock (green if analysis complete and filter enabled, red otherwise)
-            val isContentProtected = hasAnalysis && currentFilterLevel != ProfanityFilterLevel.NONE
+            // Force green for demo content
+            val isContentProtected = (hasAnalysis && currentFilterLevel != ProfanityFilterLevel.NONE) || isDemoContent
             Box(
                 modifier = Modifier
                     .background(
@@ -804,11 +1009,36 @@ fun PlayerControls(
                         )
                     }
                 }
-                
+
+                // Back Button - Left Side (Mobile Only)
+                if (isMobile) {
+                    var backButtonHovered by remember { mutableStateOf(false) }
+                    val backButtonInteractionSource = remember { MutableInteractionSource() }
+
+                    IconButton(
+                        onClick = onBackClick,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .animatedProfileBorder(
+                                borderWidth = 2.dp,
+                                interactionSource = backButtonInteractionSource
+                            )
+                            .hoverable(backButtonInteractionSource)
+                            .size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
                 // Gear Button - Right Side
                 var gearButtonHovered by remember { mutableStateOf(false) }
                 val gearButtonInteractionSource = remember { MutableInteractionSource() }
-                
+
                 if (isMobile) {
                     // Mobile: Use standard Material3 IconButton for proper touch handling
                     IconButton(

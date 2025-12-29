@@ -20,7 +20,7 @@ class SoundManager private constructor(private val appContext: Context) {
     }
     
     enum class Sound {
-        BACK, CLICK, MOVE, STARTUP
+        BACK, CLICK, MOVE, STARTUP, LEVEL_UP
     }
     
     private val soundPool: SoundPool
@@ -53,6 +53,7 @@ class SoundManager private constructor(private val appContext: Context) {
             soundIds[Sound.CLICK] = soundPool.load(context, R.raw.click, 1)
             soundIds[Sound.MOVE] = soundPool.load(context, R.raw.move_dpad, 1)
             soundIds[Sound.STARTUP] = soundPool.load(context, R.raw.startup_sound, 1)
+            soundIds[Sound.LEVEL_UP] = soundPool.load(context, R.raw.levelup_sound, 1)
             
             // Set up load completion listener
             soundPool.setOnLoadCompleteListener { soundPool, sampleId, status ->

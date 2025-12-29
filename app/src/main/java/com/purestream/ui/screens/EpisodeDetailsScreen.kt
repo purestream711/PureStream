@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,6 +25,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import coil.compose.AsyncImage
 import com.purestream.data.model.*
+import com.purestream.ui.components.DemoModePlaybackBlockedDialog
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
 import com.purestream.utils.rememberIsMobile
 import androidx.compose.foundation.rememberScrollState
@@ -46,11 +48,13 @@ fun EpisodeDetailsScreen(
     onClearAnalysisError: () -> Unit = {},
     canAnalyzeProfanity: Boolean = true,
     currentProfile: Profile? = null,
-    isPremium: Boolean = false
+    isPremium: Boolean = false,
+    isDemoMode: Boolean = false
 ) {
     val isMobile = rememberIsMobile()
     val playButtonFocusRequester = remember { FocusRequester() }
-    
+    var showDemoModeDialog by remember { mutableStateOf(false) }
+
     // Auto-focus Play button when screen loads
     LaunchedEffect(Unit) {
         try {
@@ -145,17 +149,19 @@ fun EpisodeDetailsScreen(
                                 )
                             }
 
-                            // Progress bar at bottom
+                            // Progress bar at bottom (hide when 90%+ complete)
                             progressPercentage?.let { progress ->
-                                LinearProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(4.dp)
-                                        .align(Alignment.BottomCenter),
-                                    color = Color(0xFFF5B800),
-                                    trackColor = Color(0xFF374151)
-                                )
+                                if (progress < 0.90f) {
+                                    LinearProgressIndicator(
+                                        progress = { progress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .align(Alignment.BottomCenter),
+                                        color = Color(0xFFF5B800),
+                                        trackColor = Color(0xFF374151)
+                                    )
+                                }
                             }
                         }
                     }
@@ -171,6 +177,7 @@ fun EpisodeDetailsScreen(
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
                     
@@ -247,7 +254,8 @@ fun EpisodeDetailsScreen(
                             text = summary,
                             fontSize = 14.sp,
                             color = Color(0xFFE0E0E0),
-                            lineHeight = 20.sp
+                            lineHeight = 20.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                     
@@ -262,8 +270,8 @@ fun EpisodeDetailsScreen(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            // Show Resume + Restart when there's progress, otherwise show Play
-                            if (progressPercentage != null && progressPercentage > 0f) {
+                            // Show Resume + Restart when there's progress (but not complete), otherwise show Play
+                            if (progressPercentage != null && progressPercentage > 0f && progressPercentage < 0.90f) {
                                 // Resume Button
                                 val resumeButtonInteractionSource = remember { MutableInteractionSource() }
                                 val resumeButtonBackgroundColor = getAnimatedButtonBackgroundColor(
@@ -272,7 +280,13 @@ fun EpisodeDetailsScreen(
                                 )
 
                                 Button(
-                                    onClick = { onPlayClick(progressPosition ?: 0L) },
+                                    onClick = {
+                                        if (isDemoMode) {
+                                            showDemoModeDialog = true
+                                        } else {
+                                            onPlayClick(progressPosition ?: 0L)
+                                        }
+                                    },
                                     modifier = Modifier.height(48.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = resumeButtonBackgroundColor,
@@ -301,7 +315,13 @@ fun EpisodeDetailsScreen(
                                 )
 
                                 IconButton(
-                                    onClick = { onPlayClick(0L) },
+                                    onClick = {
+                                        if (isDemoMode) {
+                                            showDemoModeDialog = true
+                                        } else {
+                                            onPlayClick(0L)
+                                        }
+                                    },
                                     modifier = Modifier
                                         .size(48.dp)
                                         .background(
@@ -325,7 +345,13 @@ fun EpisodeDetailsScreen(
                                 )
 
                                 Button(
-                                    onClick = { onPlayClick(0L) },
+                                    onClick = {
+                                        if (isDemoMode) {
+                                            showDemoModeDialog = true
+                                        } else {
+                                            onPlayClick(0L)
+                                        }
+                                    },
                                     modifier = Modifier.height(48.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = playButtonBackgroundColor,
@@ -348,8 +374,11 @@ fun EpisodeDetailsScreen(
                             }
                         }
 
-                        // Second Row: Analyze Profanity Button - Pro feature only, full width
-                        if (isPremium) {
+                        // Second Row: Analyze Profanity Button - Pro or Level 10+ feature, full width
+                        val (analyzeButtonLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                        val canUseAnalyzeButton = isPremium || analyzeButtonLevel >= 10
+
+                        if (canUseAnalyzeButton) {
                             onAnalyzeProfanityClick?.let { callback ->
                                 val buttonEnabled = canAnalyzeProfanity && !isAnalyzingSubtitles
                                 val buttonText = when {
@@ -406,8 +435,11 @@ fun EpisodeDetailsScreen(
                         }
                     }
                     
-                    // Subtitle Analysis Results (mobile) - Pro feature only
-                    if (isPremium) {
+                    // Subtitle Analysis Results (mobile) - Pro or Level 10+ feature
+                    val (currentLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                    val canViewAnalysis = isPremium || currentLevel >= 10
+
+                    if (canViewAnalysis) {
                         subtitleAnalysisResult?.let { result ->
                         Box(
                             modifier = Modifier.fillMaxWidth(),
@@ -539,8 +571,11 @@ fun EpisodeDetailsScreen(
                         }
                     }
                     
-                    // Analysis Results (directly below thumbnail) - Pro feature only
-                    if (isPremium) {
+                    // Analysis Results (directly below thumbnail) - Pro or Level 10+ feature
+                    val (tvCurrentLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                    val tvCanViewAnalysis = isPremium || tvCurrentLevel >= 10
+
+                    if (tvCanViewAnalysis) {
                         subtitleAnalysisResult?.let { result ->
                         SubtitleAnalysisCard(
                             analysisResult = result,
@@ -727,7 +762,13 @@ fun EpisodeDetailsScreen(
                         val resumeButtonContentColor = if (isResumeFocused) Color.Black else Color.White
 
                         Button(
-                            onClick = { onPlayClick(progressPosition ?: 0L) },
+                            onClick = {
+                                if (isDemoMode) {
+                                    showDemoModeDialog = true
+                                } else {
+                                    onPlayClick(progressPosition ?: 0L)
+                                }
+                            },
                             modifier = Modifier
                                 .height(48.dp)
                                 .focusRequester(playButtonFocusRequester)
@@ -760,7 +801,13 @@ fun EpisodeDetailsScreen(
                         val restartButtonIconColor = if (isRestartFocused) Color.Black else Color.White
 
                         IconButton(
-                            onClick = { onPlayClick(0L) },
+                            onClick = {
+                                if (isDemoMode) {
+                                    showDemoModeDialog = true
+                                } else {
+                                    onPlayClick(0L)
+                                }
+                            },
                             modifier = Modifier
                                 .size(48.dp)
                                 .onFocusChanged { isRestartFocused = it.isFocused }
@@ -786,7 +833,13 @@ fun EpisodeDetailsScreen(
                         val playButtonContentColor = if (isPlayFocused) Color.Black else Color.White
 
                         Button(
-                            onClick = { onPlayClick(0L) },
+                            onClick = {
+                                if (isDemoMode) {
+                                    showDemoModeDialog = true
+                                } else {
+                                    onPlayClick(0L)
+                                }
+                            },
                             modifier = Modifier
                                 .height(48.dp)
                                 .focusRequester(playButtonFocusRequester)
@@ -813,8 +866,11 @@ fun EpisodeDetailsScreen(
                         }
                     }
 
-                    // Analyze Profanity Button - Pro feature only
-                    if (isPremium) {
+                    // Analyze Profanity Button - Pro or Level 10+ feature
+                    val (tvAnalyzeButtonLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                    val tvCanUseAnalyzeButton = isPremium || tvAnalyzeButtonLevel >= 10
+
+                    if (tvCanUseAnalyzeButton) {
                         onAnalyzeProfanityClick?.let { callback ->
                         var isAnalyzeFocused by remember { mutableStateOf(false) }
                         val buttonEnabled = canAnalyzeProfanity && !isAnalyzingSubtitles
@@ -886,6 +942,13 @@ fun EpisodeDetailsScreen(
                 }
             }
         }
+        }
+
+        // Show demo mode dialog when playback is blocked
+        if (showDemoModeDialog) {
+            DemoModePlaybackBlockedDialog(
+                onDismiss = { showDemoModeDialog = false }
+            )
         }
     }
 }

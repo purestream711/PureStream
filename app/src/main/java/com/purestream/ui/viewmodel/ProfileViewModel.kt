@@ -1,4 +1,5 @@
 package com.purestream.ui.viewmodel
+import android.content.Context
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,12 +23,13 @@ data class ProfileCreationState(
     val availableLibraries: List<PlexLibrary> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
-    val isCreating: Boolean = false
+    val isCreating: Boolean = false,
+    val isDefaultProfile: Boolean = false
 )
 
 class ProfileViewModel(
-    private val plexRepository: PlexRepository = PlexRepository(),
-    private val context: android.content.Context
+    private val context: android.content.Context,
+    private val plexRepository: PlexRepository = PlexRepository(context)
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(ProfileCreationState())
@@ -38,22 +40,7 @@ class ProfileViewModel(
     private val profileManager = ProfileManager.getInstance(context)
     
     // Predefined animal avatar images for profile selection (14 total)
-    val avatarImages = listOf(
-        "bear_avatar",
-        "beaver_avatar",
-        "cat_avatar",
-        "cheetah_avatar",
-        "deer_avatar",
-        "dog_avatar",
-        "elephant_avatar",
-        "fox_avatar",
-        "giraffe_avatar",
-        "hedgehog_avatar",
-        "koala_avatar",
-        "lion_avatar",
-        "monkey_avatar",
-        "raccoon_avatar"
-    )
+    val avatarImages = AvatarConstants.AVATAR_IMAGES
     
     init {
         loadAvailableLibraries()
@@ -83,7 +70,11 @@ class ProfileViewModel(
     fun updateProfanityFilterLevel(level: ProfanityFilterLevel) {
         _uiState.value = _uiState.value.copy(profanityFilterLevel = level)
     }
-    
+
+    fun updateIsDefaultProfile(isDefault: Boolean) {
+        _uiState.value = _uiState.value.copy(isDefaultProfile = isDefault)
+    }
+
     fun toggleLibrarySelection(libraryKey: String) {
         val currentSelection = _uiState.value.selectedLibraries
         val newSelection = if (currentSelection.contains(libraryKey)) {
@@ -118,7 +109,17 @@ class ProfileViewModel(
                     )
                     return@launch
                 }
-                
+
+                // Check for Demo Mode
+                if (com.purestream.data.demo.DemoData.isDemoToken(token)) {
+                    android.util.Log.d("ProfileViewModel", "Demo Mode: Loading demo libraries")
+                    _uiState.value = _uiState.value.copy(
+                        availableLibraries = com.purestream.data.demo.DemoData.DEMO_LIBRARIES,
+                        isLoading = false
+                    )
+                    return@launch
+                }
+
                 val result = plexRepository.getLibrariesWithAuth(token)
                 result.fold(
                     onSuccess = { libraries ->
@@ -169,17 +170,23 @@ class ProfileViewModel(
                     avatarImage = currentState.selectedAvatarImage,
                     profileType = currentState.profileType,
                     profanityFilterLevel = currentState.profanityFilterLevel,
-                    selectedLibraries = currentState.selectedLibraries
+                    selectedLibraries = currentState.selectedLibraries,
+                    isDefaultProfile = currentState.isDefaultProfile
                 )
-                
+
                 // Save profile to database
                 android.util.Log.d("ProfileViewModel", "Attempting to save profile: ${profile.name}")
                 profileRepository.insertProfile(profile)
                 android.util.Log.d("ProfileViewModel", "Profile saved successfully: ${profile.id}")
-                
+
+                // If this is set as default profile, ensure only one profile is default
+                if (currentState.isDefaultProfile) {
+                    profileRepository.setDefaultProfile(profile.id)
+                }
+
                 // Set as current profile in ProfileManager
                 profileManager.setCurrentProfile(profile)
-                
+
                 _uiState.value = _uiState.value.copy(isCreating = false)
                 onSuccess(profile)
                 

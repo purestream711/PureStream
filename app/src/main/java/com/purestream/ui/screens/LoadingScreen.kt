@@ -26,6 +26,12 @@ import com.purestream.utils.rememberIsMobile
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Brush
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+import androidx.lifecycle.Observer
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import java.util.UUID
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -34,106 +40,185 @@ fun LoadingScreen(
     homeViewModel: HomeViewModel? = null,
     moviesViewModel: com.purestream.ui.viewmodel.MoviesViewModel? = null,
     tvShowsViewModel: com.purestream.ui.viewmodel.TvShowsViewModel? = null,
-    currentProfile: Profile? = null
+    currentProfile: Profile? = null,
+    workRequestId: String? = null,
+    profileRepository: com.purestream.data.repository.ProfileRepository? = null
 ) {
     val context = LocalContext.current
     val isMobile = rememberIsMobile()
-    
+
     // Loading states
     var currentLoadingText by remember { mutableStateOf("Loading Profile...") }
     var loadingProgress by remember { mutableStateOf(0f) }
     var hasError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
-    
-    // Loading text options
-    val loadingTexts = listOf(
-        "Loading Profile...",
-        "Connecting to Plex...",
-        "Loading Libraries...",
-        "Curating Dashboard...",
-        "Almost Ready..."
-    )
-    
+    var isQuotaError by remember { mutableStateOf(false) }
+
     // Animate progress bar
     val animatedProgress by animateFloatAsState(
         targetValue = loadingProgress,
         animationSpec = tween(durationMillis = 500, easing = LinearEasing),
         label = "progress_animation"
     )
-    
+
     // Handle actual data loading
-    LaunchedEffect(Unit) {
-        try {
-            // Step 1: Loading Profile (20%)
-            currentLoadingText = loadingTexts[0]
-            loadingProgress = 0.2f
-            delay(500)
-            
-            if (currentProfile == null) {
-                errorMessage = "No profile selected"
-                hasError = true
-                return@LaunchedEffect
+    LaunchedEffect(key1 = workRequestId) {
+        if (workRequestId != null) {
+            // AI Curation loading logic with fake progress and creative messages
+            val loadingMessages = listOf(
+                "Scanning Your Plex Libraries..." to 0.15f,
+                "Consulting with Gemini AI..." to 0.30f,
+                "Discovering Trending Media..." to 0.45f,
+                "Finding All-Time Greats..." to 0.60f,
+                "Curating Action-Packed Picks..." to 0.75f,
+                "Matching Content to Your Library..." to 0.90f,
+                "Finalizing Your Dashboard..." to 0.99f
+            )
+
+            var currentMessageIndex = 0
+            var hasFinished = false
+            var finishTime = 0L
+            val minLoadingDuration = 30000L // 30 seconds minimum
+            val startTime = System.currentTimeMillis()
+
+            val workManager = WorkManager.getInstance(context)
+            val workInfoLiveData = workManager.getWorkInfoByIdLiveData(UUID.fromString(workRequestId))
+
+            val observer = Observer<WorkInfo> { workInfo ->
+                when (workInfo?.state) {
+                    WorkInfo.State.SUCCEEDED -> {
+                        hasFinished = true
+                        finishTime = System.currentTimeMillis()
+                    }
+                    WorkInfo.State.FAILED -> {
+                        val error = workInfo.outputData.getString("error") ?: "AI curation failed."
+                        errorMessage = error
+
+                        // Check if it's a quota error (Gemini API quota exceeded)
+                        isQuotaError = error.contains("quota", ignoreCase = true) ||
+                                       error.contains("429", ignoreCase = true) ||
+                                       error.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
+                                       error.contains("rate limit", ignoreCase = true)
+
+                        hasError = true
+                    }
+                    WorkInfo.State.CANCELLED -> {
+                        errorMessage = "AI curation was cancelled."
+                        hasError = true
+                    }
+                    else -> {
+                        // RUNNING, ENQUEUED, BLOCKED, etc. - continue fake progress
+                    }
+                }
             }
-            
-            // Step 2: Connecting to Plex (40%)
-            currentLoadingText = loadingTexts[1]
-            loadingProgress = 0.4f
-            delay(500)
-            
-            // Setup Plex connection
-            val authRepository = com.purestream.data.repository.PlexAuthRepository(context)
-            val authToken = authRepository.getAuthToken()
-            
-            if (authToken == null) {
-                // Give a brief delay and try again - auth token might still be persisting
-                delay(200)
-                val retryToken = authRepository.getAuthToken()
-                if (retryToken == null) {
-                    errorMessage = "No Plex authentication found"
+
+            workInfoLiveData.observeForever(observer)
+
+            // Fake progress loop
+            while (!hasError) {
+                val elapsed = System.currentTimeMillis() - startTime
+                val targetProgress = (elapsed / minLoadingDuration.toFloat()).coerceAtMost(1f)
+
+                // Update message based on progress
+                if (currentMessageIndex < loadingMessages.size) {
+                    val (message, threshold) = loadingMessages[currentMessageIndex]
+                    if (targetProgress >= threshold) {
+                        currentLoadingText = message
+                        currentMessageIndex++
+                    }
+                }
+
+                // Update progress
+                if (hasFinished) {
+                    // Work finished - check if minimum time elapsed
+                    if (elapsed >= minLoadingDuration) {
+                        // Minimum time passed, go to 100% and complete
+                        loadingProgress = 1.0f
+                        delay(100)
+                        workInfoLiveData.removeObserver(observer)
+                        onLoadingComplete()
+                        break
+                    } else {
+                        // Hold at 99% until minimum time passes
+                        loadingProgress = 0.99f
+                    }
+                } else {
+                    // Still working - show fake progress up to 99%
+                    loadingProgress = (targetProgress * 0.99f).coerceAtMost(0.99f)
+                }
+
+                delay(100) // Update every 100ms
+            }
+
+            workInfoLiveData.removeObserver(observer)
+        } else {
+            // Original loading logic
+            try {
+                // Loading text options
+                val loadingTexts = listOf(
+                    "Loading Profile...",
+                    "Connecting to Plex...",
+                    "Loading Libraries...",
+                    "Curating Dashboard...",
+                    "Almost Ready..."
+                )
+
+                // Step 1: Loading Profile (20%)
+                currentLoadingText = loadingTexts[0]
+                loadingProgress = 0.2f
+                delay(500)
+
+                if (currentProfile == null) {
+                    errorMessage = "No profile selected"
                     hasError = true
                     return@LaunchedEffect
-                } else {
-                    // Use the retry token
-                    setupViewModelsWithAuth(
-                        retryToken, 
-                        homeViewModel, 
-                        moviesViewModel, 
-                        tvShowsViewModel, 
-                        currentProfile
-                    )
                 }
-            } else {
-                // Use the original token
-                setupViewModelsWithAuth(
-                    authToken, 
-                    homeViewModel, 
-                    moviesViewModel, 
-                    tvShowsViewModel, 
-                    currentProfile
-                )
+
+                // Step 2: Connecting to Plex (40%)
+                currentLoadingText = loadingTexts[1]
+                loadingProgress = 0.4f
+                delay(500)
+
+                // Setup Plex connection
+                val authRepository = com.purestream.data.repository.PlexAuthRepository(context)
+                val authToken = authRepository.getAuthToken()
+
+                if (authToken == null) {
+                    delay(200)
+                    val retryToken = authRepository.getAuthToken()
+                    if (retryToken == null) {
+                        errorMessage = "No Plex authentication found"
+                        hasError = true
+                        return@LaunchedEffect
+                    } else {
+                        setupViewModelsWithAuth(retryToken, homeViewModel, moviesViewModel, tvShowsViewModel, currentProfile)
+                    }
+                } else {
+                    setupViewModelsWithAuth(authToken, homeViewModel, moviesViewModel, tvShowsViewModel, currentProfile)
+                }
+
+                // Step 3: Loading Libraries (60%)
+                currentLoadingText = loadingTexts[2]
+                loadingProgress = 0.6f
+                delay(500)
+
+                // Step 4: Curating Dashboard (80%)
+                currentLoadingText = loadingTexts[3]
+                loadingProgress = 0.8f
+                delay(1000)
+
+                // Step 5: Almost Ready (100%)
+                currentLoadingText = loadingTexts[4]
+                loadingProgress = 1.0f
+                delay(500)
+
+                // Complete loading
+                onLoadingComplete()
+
+            } catch (e: Exception) {
+                errorMessage = "Failed to load: ${e.message}"
+                hasError = true
             }
-            
-            // Step 3: Loading Libraries (60%)
-            currentLoadingText = loadingTexts[2]
-            loadingProgress = 0.6f
-            delay(500)
-            
-            // Step 4: Curating Dashboard (80%)
-            currentLoadingText = loadingTexts[3]
-            loadingProgress = 0.8f
-            delay(1000)
-            
-            // Step 5: Almost Ready (100%)
-            currentLoadingText = loadingTexts[4]
-            loadingProgress = 1.0f
-            delay(500)
-            
-            // Complete loading
-            onLoadingComplete()
-            
-        } catch (e: Exception) {
-            errorMessage = "Failed to load: ${e.message}"
-            hasError = true
         }
     }
     
@@ -170,30 +255,80 @@ fun LoadingScreen(
         ) {
             if (hasError) {
                 // Error state
-                Text(
-                    text = "Loading Failed",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = NetflixRed,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                
-                Text(
-                    text = errorMessage,
-                    fontSize = 16.sp,
-                    color = TextSecondary,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier.padding(bottom = 24.dp)
-                )
-                
-                Button(
-                    onClick = onLoadingComplete,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NetflixRed,
-                        contentColor = Color.White
+                if (isQuotaError) {
+                    // Quota exceeded - show friendly message
+                    Text(
+                        text = "AI Quota Limit Exceeded",
+                        fontSize = if (isMobile) 20.sp else 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(bottom = 16.dp)
                     )
-                ) {
-                    Text("Continue Anyway")
+
+                    Text(
+                        text = "Using standard collections instead...",
+                        fontSize = if (isMobile) 14.sp else 16.sp,
+                        color = TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 24.dp)
+                    )
+
+                    Button(
+                        onClick = {
+                            // Disable AI curation and navigate to home
+                            kotlinx.coroutines.MainScope().launch {
+                                currentProfile?.let { profile ->
+                                    profileRepository?.updateProfile(
+                                        profile.copy(
+                                            aiCuratedEnabled = false,
+                                            dashboardCollections = Profile.getDefaultCollections()
+                                        )
+                                    )
+                                }
+                                onLoadingComplete()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF8B5CF6), // Purple
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .padding(horizontal = if (isMobile) 16.dp else 0.dp)
+                    ) {
+                        Text(
+                            text = "Continue",
+                            fontSize = if (isMobile) 14.sp else 16.sp
+                        )
+                    }
+                } else {
+                    // Generic error
+                    Text(
+                        text = "Loading Failed",
+                        fontSize = if (isMobile) 20.sp else 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = NetflixRed,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    Text(
+                        text = errorMessage,
+                        fontSize = if (isMobile) 14.sp else 16.sp,
+                        color = TextSecondary,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier
+                            .padding(bottom = 24.dp)
+                            .padding(horizontal = if (isMobile) 16.dp else 32.dp)
+                    )
+
+                    Button(
+                        onClick = onLoadingComplete,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NetflixRed,
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("Continue Anyway")
+                    }
                 }
             } else {
                 // Loading state

@@ -27,6 +27,9 @@ import com.purestream.ui.theme.*
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
 import com.purestream.utils.rememberIsMobile
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -66,6 +69,7 @@ fun FeatureShowcaseScreen(
                     )
                 )
             )
+            .padding(WindowInsets.navigationBars.asPaddingValues())
     ) {
         LazyColumn(
             modifier = Modifier

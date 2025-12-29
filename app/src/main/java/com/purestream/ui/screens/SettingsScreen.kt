@@ -48,8 +48,11 @@ import com.purestream.ui.theme.animatedPosterBorder
 import com.purestream.data.model.*
 import com.purestream.data.repository.ProfileRepository
 import com.purestream.data.repository.PlexRepository
+import com.purestream.ui.components.CircularLevelIndicator
+import com.purestream.utils.LevelCalculator
 import com.purestream.ui.components.LeftSidebar
 import com.purestream.ui.components.BottomNavigation
+import com.purestream.ui.components.LibraryDropdown
 import com.purestream.ui.theme.*
 import com.purestream.ui.theme.tvButtonFocus
 import com.purestream.data.manager.PremiumStatusManager
@@ -65,6 +68,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.purestream.utils.rememberIsMobile
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 
 // Data class to represent grouped movies for filtered subtitles
 private data class GroupedMovie(
@@ -99,15 +105,28 @@ fun SettingsScreen(
     onMonthlyUpgradeClick: () -> Unit = {},
     onAnnualUpgradeClick: () -> Unit = {},
     onFreeVersionClick: () -> Unit = {},
+    onPreferredLibraryChange: () -> Unit = {},  // New callback for library changes
+    onNavigateToLoading: () -> Unit = {},  // Navigate to loading screen for AI curation
+    onProfileUpdated: (Profile) -> Unit = {},  // Callback when profile is updated
     modifier: Modifier = Modifier
 ) {
     val isMobile = rememberIsMobile()
     val context = LocalContext.current
-    
+    val coroutineScope = rememberCoroutineScope()
+
+    // Add loading state for toggle operations
+    var isTogglingAiCuration by remember { mutableStateOf(false) }
+
+    // Level-up celebration state
+    var showCelebration by remember { mutableStateOf(false) }
+    var celebrationOldLevel by remember { mutableIntStateOf(1) }
+    var celebrationNewLevel by remember { mutableIntStateOf(2) }
+    var celebrationTotalFiltered by remember { mutableIntStateOf(0) }
+
     // Defensive premium status management - prevents crashes from cross-platform sync issues
     val premiumStatusManager = remember { PremiumStatusManager.getInstance(context) }
     val premiumStatusState by premiumStatusManager.premiumStatus.collectAsState()
-    
+
     // Determine safe premium status with fallback protection
     val safePremiumStatus = try {
         val currentState = premiumStatusState // Store in local variable for smart casting
@@ -125,7 +144,7 @@ fun SettingsScreen(
         android.util.Log.e("SettingsScreen", "Error determining premium status", e)
         appSettings?.isPremium ?: false // Ultimate fallback
     }
-    
+
     // Trigger premium status refresh if needed (but don't block UI)
     LaunchedEffect(Unit) {
         try {
@@ -135,7 +154,7 @@ fun SettingsScreen(
             // Continue without blocking UI
         }
     }
-    
+
     // Focus management
     val sidebarFocusRequester = remember { FocusRequester() }
     val contentFocusRequester = remember { FocusRequester() } // For Pure Stream Pro tab
@@ -152,8 +171,6 @@ fun SettingsScreen(
     // State to trigger scroll reset in Dashboard Customization
     var dashboardScrollResetTrigger by remember { mutableStateOf(0) }
 
-    // Note: Premium status is now managed defensively above with safePremiumStatus
-
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -162,56 +179,69 @@ fun SettingsScreen(
 
         if (isMobile) {
             // Mobile: Column layout with bottom navigation
-            Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
                 // Main content (takes available space)
                 TabbedSettingsContent(
-                currentProfile = currentProfile,
-                appSettings = appSettings,
-                safePremiumStatus = safePremiumStatus,
-                availableLibraries = availableLibraries,
-                onProfanityFilterChange = onProfanityFilterChange,
-                onLibrarySelectionChange = onLibrarySelectionChange,
-                onSettingToggle = onSettingToggle,
-                onMuteDurationChange = onMuteDurationChange,
-                onAddCustomProfanity = onAddCustomProfanity,
-                onAddWhitelistWord = onAddWhitelistWord,
-                onRemoveCustomProfanity = onRemoveCustomProfanity,
-                onRemoveWhitelistWord = onRemoveWhitelistWord,
-                onLogout = onLogout,
-                onMonthlyUpgradeClick = onMonthlyUpgradeClick,
-                onAnnualUpgradeClick = onAnnualUpgradeClick,
-                onFreeVersionClick = onFreeVersionClick,
-                contentFocusRequester = contentFocusRequester,
-                sidebarFocusRequester = sidebarFocusRequester,
-                upgradeButtonFocusRequester = upgradeButtonFocusRequester,
-                dashboardScrollResetTrigger = dashboardScrollResetTrigger,
-                onDashboardScrollReset = { dashboardScrollResetTrigger++ },
-                profanityFilterTabFocusRequester = profanityFilterTabFocusRequester,
-                profanityFilterFocusRequester = profanityFilterFocusRequester,
-                filteredSubtitlesTabFocusRequester = filteredSubtitlesTabFocusRequester,
-                filteredSubtitlesFocusRequester = filteredSubtitlesFocusRequester,
-                dashboardCustomizationTabFocusRequester = dashboardCustomizationTabFocusRequester,
-                dashboardCustomizationFocusRequester = dashboardCustomizationFocusRequester,
-                logoutTabFocusRequester = logoutTabFocusRequester,
-                logoutButtonFocusRequester = logoutButtonFocusRequester,
-                isMobile = true,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(Color.Transparent)
-            )
-            
-            // Bottom Navigation for Mobile
-            BottomNavigation(
-                currentProfile = currentProfile,
-                onHomeClick = onHomeClick,
-                onSearchClick = onSearchClick,
-                onMoviesClick = onMoviesClick,
-                onTvShowsClick = onTvShowsClick,
-                onSettingsClick = { /* Already on settings */ },
-                onProfileClick = onSwitchUser,
-                currentSection = "settings"
-            )
+                    currentProfile = currentProfile,
+                    appSettings = appSettings,
+                    safePremiumStatus = safePremiumStatus,
+                    availableLibraries = availableLibraries,
+                    onProfanityFilterChange = onProfanityFilterChange,
+                    onLibrarySelectionChange = onLibrarySelectionChange,
+                    onSettingToggle = onSettingToggle,
+                    onMuteDurationChange = onMuteDurationChange,
+                    onAddCustomProfanity = onAddCustomProfanity,
+                    onAddWhitelistWord = onAddWhitelistWord,
+                    onRemoveCustomProfanity = onRemoveCustomProfanity,
+                    onRemoveWhitelistWord = onRemoveWhitelistWord,
+                    onLogout = onLogout,
+                    onMonthlyUpgradeClick = onMonthlyUpgradeClick,
+                    onAnnualUpgradeClick = onAnnualUpgradeClick,
+                    onFreeVersionClick = onFreeVersionClick,
+                    onPreferredLibraryChange = onPreferredLibraryChange,
+                    // Pass callbacks down to TabbedSettingsContent
+                    onNavigateToLoading = onNavigateToLoading,
+                    onProfileUpdated = onProfileUpdated,
+                    isTogglingAiCuration = isTogglingAiCuration,
+                    onTogglingAiCurationChange = { isTogglingAiCuration = it },
+                    contentFocusRequester = contentFocusRequester,
+                    sidebarFocusRequester = sidebarFocusRequester,
+                    upgradeButtonFocusRequester = upgradeButtonFocusRequester,
+                    dashboardScrollResetTrigger = dashboardScrollResetTrigger,
+                    onDashboardScrollReset = { dashboardScrollResetTrigger++ },
+                    profanityFilterTabFocusRequester = profanityFilterTabFocusRequester,
+                    profanityFilterFocusRequester = profanityFilterFocusRequester,
+                    filteredSubtitlesTabFocusRequester = filteredSubtitlesTabFocusRequester,
+                    filteredSubtitlesFocusRequester = filteredSubtitlesFocusRequester,
+                    dashboardCustomizationTabFocusRequester = dashboardCustomizationTabFocusRequester,
+                    dashboardCustomizationFocusRequester = dashboardCustomizationFocusRequester,
+                    logoutTabFocusRequester = logoutTabFocusRequester,
+                    logoutButtonFocusRequester = logoutButtonFocusRequester,
+                    onCelebrationOldLevelChange = { celebrationOldLevel = it },
+                    onCelebrationNewLevelChange = { celebrationNewLevel = it },
+                    onCelebrationTotalFilteredChange = { celebrationTotalFiltered = it },
+                    onShowCelebrationChange = { showCelebration = it },
+                    isMobile = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(Color.Transparent)
+                )
+
+                // Bottom Navigation for Mobile
+                BottomNavigation(
+                    currentProfile = currentProfile,
+                    onHomeClick = onHomeClick,
+                    onSearchClick = onSearchClick,
+                    onMoviesClick = onMoviesClick,
+                    onTvShowsClick = onTvShowsClick,
+                    onSettingsClick = { /* Already on settings */ },
+                    onProfileClick = onSwitchUser,
+                    currentSection = "settings",
+                    isVisible = true  // Always visible on settings (complex tabbed layout)
+                )
             }
         } else {
             // TV: Existing Row layout with sidebar
@@ -258,6 +288,12 @@ fun SettingsScreen(
                     onMonthlyUpgradeClick = onMonthlyUpgradeClick,
                     onAnnualUpgradeClick = onAnnualUpgradeClick,
                     onFreeVersionClick = onFreeVersionClick,
+                    onPreferredLibraryChange = onPreferredLibraryChange,
+                    // Pass callbacks down to TabbedSettingsContent
+                    onNavigateToLoading = onNavigateToLoading,
+                    onProfileUpdated = onProfileUpdated,
+                    isTogglingAiCuration = isTogglingAiCuration,
+                    onTogglingAiCurationChange = { isTogglingAiCuration = it },
                     contentFocusRequester = contentFocusRequester,
                     sidebarFocusRequester = sidebarFocusRequester,
                     upgradeButtonFocusRequester = upgradeButtonFocusRequester,
@@ -271,6 +307,10 @@ fun SettingsScreen(
                     dashboardCustomizationFocusRequester = dashboardCustomizationFocusRequester,
                     logoutTabFocusRequester = logoutTabFocusRequester,
                     logoutButtonFocusRequester = logoutButtonFocusRequester,
+                    onCelebrationOldLevelChange = { celebrationOldLevel = it },
+                    onCelebrationNewLevelChange = { celebrationNewLevel = it },
+                    onCelebrationTotalFilteredChange = { celebrationTotalFiltered = it },
+                    onShowCelebrationChange = { showCelebration = it },
                     isMobile = false,
                     modifier = Modifier
                         .weight(1f)
@@ -278,6 +318,44 @@ fun SettingsScreen(
                         .background(Color.Transparent)
                 )
             }
+        }
+
+        // Show loading overlay when toggling AI curation
+        if (isTogglingAiCuration) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .clickable(enabled = false) { },  // Block interaction
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFFF5B800),
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text(
+                        text = "Updating settings...",
+                        color = Color.White,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        }
+
+        // Level-up celebration overlay
+        if (showCelebration) {
+            LevelUpCelebrationScreen(
+                oldLevel = celebrationOldLevel,
+                newLevel = celebrationNewLevel,
+                totalFilteredWords = celebrationTotalFiltered,
+                onDismiss = {
+                    showCelebration = false
+                }
+            )
         }
     }
 }
@@ -310,6 +388,12 @@ private fun TabbedSettingsContent(
     onMonthlyUpgradeClick: () -> Unit,
     onAnnualUpgradeClick: () -> Unit,
     onFreeVersionClick: () -> Unit,
+    onPreferredLibraryChange: () -> Unit = {},
+    // Callbacks added to signature to fix compilation error
+    onNavigateToLoading: () -> Unit = {},
+    onProfileUpdated: (Profile) -> Unit = {},
+    isTogglingAiCuration: Boolean = false,
+    onTogglingAiCurationChange: (Boolean) -> Unit = {},
     contentFocusRequester: FocusRequester,
     sidebarFocusRequester: FocusRequester,
     upgradeButtonFocusRequester: FocusRequester,
@@ -324,10 +408,26 @@ private fun TabbedSettingsContent(
     dashboardScrollResetTrigger: Int,
     onDashboardScrollReset: () -> Unit,
     isMobile: Boolean = false,
+    onCelebrationOldLevelChange: (Int) -> Unit = {},
+    onCelebrationNewLevelChange: (Int) -> Unit = {},
+    onCelebrationTotalFilteredChange: (Int) -> Unit = {},
+    onShowCelebrationChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val coroutineScope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(SettingsTab.PURE_STREAM_PRO) }
     val isPremium = appSettings?.isPremium ?: false
+
+    // Cheat code state
+    var cheatCodeClickCount by remember { mutableIntStateOf(0) }
+    var cheatCodeLastClickTime by remember { mutableLongStateOf(0L) }
+
+    // Level-up cheat code state
+    var levelUpCheatClickCount by remember { mutableIntStateOf(0) }
+    var levelUpCheatLastClickTime by remember { mutableLongStateOf(0L) }
+
+    val context = LocalContext.current
+    val profileRepository = remember { ProfileRepository(context) }
 
     // Focus the first tab when settings screen loads (TV only)
     LaunchedEffect(Unit) {
@@ -400,7 +500,68 @@ private fun TabbedSettingsContent(
                     SettingsTabButton(
                         tab = tab,
                         isSelected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
+                        onClick = {
+                            selectedTab = tab
+                            if (tab == SettingsTab.PURE_STREAM_PRO) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - cheatCodeLastClickTime > 5000) {
+                                    cheatCodeClickCount = 1
+                                } else {
+                                    cheatCodeClickCount++
+                                }
+                                cheatCodeLastClickTime = currentTime
+
+                                if (cheatCodeClickCount >= 10) {
+                                    cheatCodeClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Cheat code activated! Enabling Pro mode for 5 minutes.")
+                                    val premiumManager = PremiumStatusManager.getInstance(context)
+                                    premiumManager.setTemporaryPremiumStatus(5 * 60 * 1000L) // 5 minutes
+                                }
+                            }
+
+                            // Level-up cheat code on Logout tab
+                            if (tab == SettingsTab.LOGOUT) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - levelUpCheatLastClickTime > 5000) {
+                                    levelUpCheatClickCount = 1
+                                } else {
+                                    levelUpCheatClickCount++
+                                }
+                                levelUpCheatLastClickTime = currentTime
+
+                                if (levelUpCheatClickCount >= 10) {
+                                    levelUpCheatClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Level-up cheat code activated!")
+
+                                    currentProfile?.let { profile ->
+                                        coroutineScope.launch {
+                                            // Calculate words needed for next level
+                                            val (currentLevel, wordsIntoLevel, wordsRequired) =
+                                                LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
+                                            val wordsNeeded = wordsRequired - wordsIntoLevel
+
+                                            // Add words to reach next level
+                                            val updatedProfile = profile.copy(
+                                                totalFilteredWordsCount = profile.totalFilteredWordsCount + wordsNeeded
+                                            )
+                                            profileRepository.updateProfile(updatedProfile)
+
+                                            val (newLevel, _, _) = LevelCalculator.calculateLevel(updatedProfile.totalFilteredWordsCount)
+                                            android.util.Log.i("SettingsScreen", "Leveled up from $currentLevel to $newLevel!")
+
+                                            // Notify UI to refresh
+                                            onProfileUpdated(updatedProfile)
+
+                                            // Show celebration
+                                            onCelebrationOldLevelChange(currentLevel)
+                                            onCelebrationNewLevelChange(newLevel)
+                                            onCelebrationTotalFilteredChange(updatedProfile.totalFilteredWordsCount)
+                                            onShowCelebrationChange(true)
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         modifier = Modifier
                     )
                 }
@@ -413,65 +574,126 @@ private fun TabbedSettingsContent(
                     .fillMaxWidth()
                     .padding(bottom = 16.dp)
             ) {
-            SettingsTab.values().forEachIndexed { index, tab ->
-                SettingsTabButton(
-                    tab = tab,
-                    isSelected = selectedTab == tab,
-                    onClick = { selectedTab = tab },
-                    modifier = Modifier
-                        .focusRequester(
-                            when (tab) {
-                                SettingsTab.PURE_STREAM_PRO -> contentFocusRequester
-                                SettingsTab.PROFANITY_FILTER -> profanityFilterTabFocusRequester
-                                SettingsTab.FILTERED_SUBTITLES -> filteredSubtitlesTabFocusRequester
-                                SettingsTab.DASHBOARD_CUSTOMIZATION -> dashboardCustomizationTabFocusRequester
-                                SettingsTab.LOGOUT -> logoutTabFocusRequester
-                                else -> remember { FocusRequester() }
-                            }
-                        )
-                        // FIX: Reset scroll when ANY tab gains focus.
-                        // This prevents crashes when navigating from Sidebar -> Tab -> Down to List
-                        .onFocusChanged { focusState ->
-                            if (focusState.isFocused) {
-                                onDashboardScrollReset()
-                            }
-                        }
-                        .focusProperties {
-                        if (index == 0) {
-                            left = sidebarFocusRequester
-                        }
-                        // Add down navigation to content for the SELECTED tab (not the current tab button)
-                        when (selectedTab) {
-                            SettingsTab.PURE_STREAM_PRO -> {
-                                if (!isPremium) {
-                                    down = upgradeButtonFocusRequester
+                SettingsTab.values().forEachIndexed { index, tab ->
+                    SettingsTabButton(
+                        tab = tab,
+                        isSelected = selectedTab == tab,
+                        onClick = {
+                            selectedTab = tab
+                            if (tab == SettingsTab.PURE_STREAM_PRO) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - cheatCodeLastClickTime > 5000) {
+                                    cheatCodeClickCount = 1
+                                } else {
+                                    cheatCodeClickCount++
                                 }
-                                // If premium, don't set 'down' - focus stays in place
+                                cheatCodeLastClickTime = currentTime
+
+                                if (cheatCodeClickCount >= 10) {
+                                    cheatCodeClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Cheat code activated! Enabling Pro mode for 5 minutes.")
+                                    val premiumManager = PremiumStatusManager.getInstance(context)
+                                    premiumManager.setTemporaryPremiumStatus(5 * 60 * 1000L) // 5 minutes
+                                }
                             }
-                            SettingsTab.PROFANITY_FILTER -> {
-                                // Navigate to profanity filter buttons
-                                down = profanityFilterFocusRequester
+
+                            // Level-up cheat code on Logout tab
+                            if (tab == SettingsTab.LOGOUT) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - levelUpCheatLastClickTime > 5000) {
+                                    levelUpCheatClickCount = 1
+                                } else {
+                                    levelUpCheatClickCount++
+                                }
+                                levelUpCheatLastClickTime = currentTime
+
+                                if (levelUpCheatClickCount >= 10) {
+                                    levelUpCheatClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Level-up cheat code activated!")
+
+                                    currentProfile?.let { profile ->
+                                        coroutineScope.launch {
+                                            // Calculate words needed for next level
+                                            val (currentLevel, wordsIntoLevel, wordsRequired) =
+                                                LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
+                                            val wordsNeeded = wordsRequired - wordsIntoLevel
+
+                                            // Add words to reach next level
+                                            val updatedProfile = profile.copy(
+                                                totalFilteredWordsCount = profile.totalFilteredWordsCount + wordsNeeded
+                                            )
+                                            profileRepository.updateProfile(updatedProfile)
+
+                                            val (newLevel, _, _) = LevelCalculator.calculateLevel(updatedProfile.totalFilteredWordsCount)
+                                            android.util.Log.i("SettingsScreen", "Leveled up from $currentLevel to $newLevel!")
+
+                                            // Notify UI to refresh
+                                            onProfileUpdated(updatedProfile)
+
+                                            // Show celebration
+                                            onCelebrationOldLevelChange(currentLevel)
+                                            onCelebrationNewLevelChange(newLevel)
+                                            onCelebrationTotalFilteredChange(updatedProfile.totalFilteredWordsCount)
+                                            onShowCelebrationChange(true)
+                                        }
+                                    }
+                                }
                             }
-                            SettingsTab.FILTERED_SUBTITLES -> {
-                                // Navigate to filtered subtitles content
-                                down = filteredSubtitlesFocusRequester
+                        },
+                        modifier = Modifier
+                            .focusRequester(
+                                when (tab) {
+                                    SettingsTab.PURE_STREAM_PRO -> contentFocusRequester
+                                    SettingsTab.PROFANITY_FILTER -> profanityFilterTabFocusRequester
+                                    SettingsTab.FILTERED_SUBTITLES -> filteredSubtitlesTabFocusRequester
+                                    SettingsTab.DASHBOARD_CUSTOMIZATION -> dashboardCustomizationTabFocusRequester
+                                    SettingsTab.LOGOUT -> logoutTabFocusRequester
+                                    else -> remember { FocusRequester() }
+                                }
+                            )
+                            // FIX: Reset scroll when ANY tab gains focus.
+                            // This prevents crashes when navigating from Sidebar -> Tab -> Down to List
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    onDashboardScrollReset()
+                                }
                             }
-                            SettingsTab.DASHBOARD_CUSTOMIZATION -> {
-                                // Navigate to dashboard customization first collection
-                                down = dashboardCustomizationFocusRequester
+                            .focusProperties {
+                                if (index == 0) {
+                                    left = sidebarFocusRequester
+                                }
+                                // Add down navigation to content for the SELECTED tab (not the current tab button)
+                                when (selectedTab) {
+                                    SettingsTab.PURE_STREAM_PRO -> {
+                                        if (!isPremium) {
+                                            down = upgradeButtonFocusRequester
+                                        }
+                                        // If premium, don't set 'down' - focus stays in place
+                                    }
+                                    SettingsTab.PROFANITY_FILTER -> {
+                                        // Navigate to profanity filter buttons
+                                        down = profanityFilterFocusRequester
+                                    }
+                                    SettingsTab.FILTERED_SUBTITLES -> {
+                                        // Navigate to filtered subtitles content
+                                        down = filteredSubtitlesFocusRequester
+                                    }
+                                    SettingsTab.DASHBOARD_CUSTOMIZATION -> {
+                                        // Navigate to dashboard customization first collection
+                                        down = dashboardCustomizationFocusRequester
+                                    }
+                                    SettingsTab.LOGOUT -> {
+                                        // Navigate to logout button
+                                        down = logoutButtonFocusRequester
+                                    }
+                                    else -> {
+                                        // For other tabs, navigate down to sidebar if no specific content
+                                        down = sidebarFocusRequester
+                                    }
+                                }
                             }
-                            SettingsTab.LOGOUT -> {
-                                // Navigate to logout button
-                                down = logoutButtonFocusRequester
-                            }
-                            else -> {
-                                // For other tabs, navigate down to sidebar if no specific content
-                                down = sidebarFocusRequester
-                            }
-                        }
-                    }
-                )
-            }
+                    )
+                }
             }
         }
 
@@ -537,7 +759,13 @@ private fun TabbedSettingsContent(
                         dashboardCustomizationTabFocusRequester = dashboardCustomizationTabFocusRequester,
                         scrollResetTrigger = dashboardScrollResetTrigger,
                         isMobile = isMobile,
-                        isPremium = safePremiumStatus
+                        isPremium = safePremiumStatus,
+                        onPreferredLibraryChange = onPreferredLibraryChange,
+                        // Passing the callbacks to the Dashboard tab
+                        onNavigateToLoading = onNavigateToLoading,
+                        onProfileUpdated = onProfileUpdated,
+                        isTogglingAiCuration = isTogglingAiCuration,
+                        onTogglingAiCurationChange = onTogglingAiCurationChange
                     )
                 }
                 SettingsTab.LOGOUT -> {
@@ -618,6 +846,10 @@ private fun ProfanityFilterTabContent(
     upgradeButtonFocusRequester: FocusRequester? = null,
     sidebarFocusRequester: FocusRequester? = null
 ) {
+    // Check if user has Pro OR reached level 15
+    val (currentLevel, _, _) = LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+    val hasProOrLevel15 = isPremium || currentLevel >= 15
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -643,9 +875,9 @@ private fun ProfanityFilterTabContent(
                     title = "Add Custom Profanity",
                     description = "Add words to be filtered regardless of filter level",
                     placeholder = "Enter word to add to filter...",
-                    onSubmit = if (isPremium) onAddCustomProfanity else { _ -> },
-                    onRemoveWord = if (isPremium) onRemoveCustomProfanity else { _ -> },
-                    isPremium = isPremium, // Use dynamic premium state
+                    onSubmit = if (hasProOrLevel15) onAddCustomProfanity else { _ -> },
+                    onRemoveWord = if (hasProOrLevel15) onRemoveCustomProfanity else { _ -> },
+                    isPremium = hasProOrLevel15, // Level 15 or Pro unlocks this
                     existingWords = currentProfile?.customFilteredWords ?: emptyList()
                 )
             }
@@ -655,9 +887,9 @@ private fun ProfanityFilterTabContent(
                     title = "Whitelist Profanity",
                     description = "Remove words from the profanity filter",
                     placeholder = "Enter word to remove from filter...",
-                    onSubmit = if (isPremium) onAddWhitelistWord else { _ -> },
-                    onRemoveWord = if (isPremium) onRemoveWhitelistWord else { _ -> },
-                    isPremium = isPremium, // Use dynamic premium state
+                    onSubmit = if (hasProOrLevel15) onAddWhitelistWord else { _ -> },
+                    onRemoveWord = if (hasProOrLevel15) onRemoveWhitelistWord else { _ -> },
+                    isPremium = hasProOrLevel15, // Level 15 or Pro unlocks this
                     existingWords = currentProfile?.whitelistedWords ?: emptyList()
                 )
             }
@@ -666,8 +898,8 @@ private fun ProfanityFilterTabContent(
             item {
                 MuteDurationSetting(
                     currentDuration = profile.audioMuteDuration,
-                    onDurationChange = if (isPremium) onMuteDurationChange else { _ -> },
-                    isPremium = isPremium // Use dynamic premium state
+                    onDurationChange = if (hasProOrLevel15) onMuteDurationChange else { _ -> },
+                    isPremium = hasProOrLevel15 // Level 15 or Pro unlocks this
                 )
             }
 
@@ -917,13 +1149,21 @@ private fun DashboardCustomizationTabContent(
     dashboardCustomizationTabFocusRequester: FocusRequester,
     scrollResetTrigger: Int = 0,
     isMobile: Boolean = false,
-    isPremium: Boolean = false
+    isPremium: Boolean = false,
+    onPreferredLibraryChange: () -> Unit = {},
+    onNavigateToLoading: () -> Unit = {},
+    onProfileUpdated: (Profile) -> Unit = {},
+    isTogglingAiCuration: Boolean = false,
+    onTogglingAiCurationChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     // Focus requester for the Default button
     val defaultButtonFocusRequester = remember { FocusRequester() }
+
+    // Focus requester for the AI Curated toggle
+    val aiToggleFocusRequester = remember { FocusRequester() }
 
     // Focus requester for the first collection (separate from default button)
     val firstCollectionFocusRequester = remember { FocusRequester() }
@@ -958,28 +1198,39 @@ private fun DashboardCustomizationTabContent(
     var focusTargetIndex by remember { mutableStateOf<Int?>(null) }
     var disabledFocusTargetIndex by remember { mutableStateOf<Int?>(null) }
 
+    // Library dropdown state
+    val libraryDropdownFocusRequester = remember { FocusRequester() }
+    var movieLibraries by remember { mutableStateOf<List<PlexLibrary>>(emptyList()) }
+    var selectedDashboardLibraryId by remember(profile?.preferredDashboardLibraryId) {
+        mutableStateOf(profile?.preferredDashboardLibraryId)
+    }
+
     // Get repository instances
     val profileRepository = remember { ProfileRepository(context) }
-    val plexRepository = remember { PlexRepository() }
+    val plexRepository = remember { PlexRepository(context) }
     val plexAuthRepository = remember { com.purestream.data.repository.PlexAuthRepository(context) }
 
     // Load profile collections and Plex collections with improved merging logic
-    LaunchedEffect(profile, isPremium, scrollResetTrigger) {
+    LaunchedEffect(profile, isPremium, scrollResetTrigger, selectedDashboardLibraryId) {
         try {
             // CRITICAL: Always reload fresh from database to avoid stale data
             val freshProfile = profile?.id?.let { profileRepository.getProfileById(it) }
 
-            // CRITICAL: For free users, always reset to defaults first
-            val initialCollections = if (!isPremium && freshProfile != null) {
+            // Check if user has Pro subscription OR reached level 20
+            val (currentLevel, _, _) = LevelCalculator.calculateLevel(freshProfile?.totalFilteredWordsCount ?: 0)
+            val hasProOrLevel20 = isPremium || currentLevel >= 20
+
+            // CRITICAL: For free users without level 20, always reset to defaults first
+            val initialCollections = if (!hasProOrLevel20 && freshProfile != null) {
                 val currentCollections = freshProfile.dashboardCollections
                 val defaultCollections = Profile.getDefaultCollections()
 
                 // Check if collections differ from defaults
                 val needsReset = currentCollections.size != defaultCollections.size ||
-                    currentCollections.any { current ->
-                        val default = defaultCollections.find { it.id == current.id }
-                        default == null || current.isEnabled != default.isEnabled || current.order != default.order
-                    }
+                        currentCollections.any { current ->
+                            val default = defaultCollections.find { it.id == current.id }
+                            default == null || current.isEnabled != default.isEnabled || current.order != default.order
+                        }
 
                 if (needsReset) {
                     android.util.Log.d("DashboardCustomization", "Free user with custom collections - resetting to defaults")
@@ -1000,13 +1251,50 @@ private fun DashboardCustomizationTabContent(
             val authToken = plexAuthRepository.getAuthToken()
             android.util.Log.d("DashboardCustomization", "Got auth token: ${if (authToken != null) "YES" else "NO"}")
 
-            val freshPlexCollections = if (authToken != null && plexRepository.getLibrariesWithAuth(authToken).isSuccess) {
-                // Get selected libraries from fresh profile
-                val selectedLibraries = freshProfile?.selectedLibraries ?: profile?.selectedLibraries ?: emptyList()
-                android.util.Log.d("DashboardCustomization", "Selected libraries: $selectedLibraries")
+            // Fetch movie libraries from profile's selected libraries
+            if (freshProfile != null && authToken != null) {
+                try {
+                    val allLibraries = plexRepository.getLibrariesWithAuth(authToken).getOrNull() ?: emptyList()
 
-                if (selectedLibraries.isNotEmpty()) {
-                    plexRepository.getPlexCollections(selectedLibraries).getOrNull() ?: emptyList()
+                    // Filter for movie libraries that are in profile's selected libraries
+                    movieLibraries = allLibraries.filter { library ->
+                        library.type == "movie" &&
+                                freshProfile.selectedLibraries.contains(library.key)
+                    }
+
+                    // Sync selectedDashboardLibraryId with fresh profile data
+                    // This ensures the dropdown reflects the database state, not stale UI state
+                    val freshLibraryId = freshProfile.preferredDashboardLibraryId
+                    if (freshLibraryId != selectedDashboardLibraryId) {
+                        android.util.Log.d("DashboardCustomization", "Syncing dropdown state: $selectedDashboardLibraryId -> $freshLibraryId")
+                        selectedDashboardLibraryId = freshLibraryId
+                    }
+
+                    // Initialize selected library if not set
+                    if (selectedDashboardLibraryId == null && movieLibraries.isNotEmpty()) {
+                        selectedDashboardLibraryId = movieLibraries.first().key
+                    }
+
+                    android.util.Log.d("DashboardCustomization", "Found ${movieLibraries.size} movie libraries, selected: $selectedDashboardLibraryId")
+                } catch (e: Exception) {
+                    android.util.Log.e("DashboardCustomization", "Error fetching libraries: ${e.message}")
+                }
+            }
+
+            val freshPlexCollections = if (authToken != null && plexRepository.getLibrariesWithAuth(authToken).isSuccess) {
+                // Use selected dashboard library if available, otherwise all selected libraries
+                val librariesToFetch = if (selectedDashboardLibraryId != null) {
+                    listOf(selectedDashboardLibraryId!!)
+                } else {
+                    freshProfile?.selectedLibraries ?: profile?.selectedLibraries ?: emptyList()
+                }
+
+                android.util.Log.d("DashboardCustomization", "Loading collections from library: $selectedDashboardLibraryId")
+
+                if (librariesToFetch.isNotEmpty()) {
+                    val collections = plexRepository.getPlexCollections(librariesToFetch).getOrNull() ?: emptyList()
+                    android.util.Log.d("DashboardCustomization", "Loaded ${collections.size} collections from library: $selectedDashboardLibraryId")
+                    collections
                 } else {
                     emptyList()
                 }
@@ -1083,10 +1371,12 @@ private fun DashboardCustomizationTabContent(
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
-                if (!isPremium) {
+                val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
+                val hasProOrLevel20 = isPremium || currentLevel >= 20
+                if (!hasProOrLevel20) {
                     Icon(
                         imageVector = Icons.Default.Lock,
-                        contentDescription = "Pro Feature",
+                        contentDescription = "Pro or Level 20 Feature",
                         tint = Color(0xFF8B5CF6),
                         modifier = Modifier.size(20.dp)
                     )
@@ -1112,13 +1402,117 @@ private fun DashboardCustomizationTabContent(
                         text = if (isPremium) {
                             "Press select to rearrange, hold select to disable."
                         } else {
-                            "Upgrade to Pro to customize your home screen layout."
+                            val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
+                            if (currentLevel >= 20) {
+                                "Press select to rearrange, hold select to disable."
+                            } else {
+                                "Reach Level 20 or upgrade to Pro to customize your home screen layout."
+                            }
                         },
                         fontSize = 12.sp,
                         color = if (isPremium) TextSecondary.copy(alpha = 0.8f) else Color(0xFF8B5CF6),
                         fontWeight = if (isPremium) FontWeight.Normal else FontWeight.Medium,
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
+
+                    // AI Curated Dashboard Toggle (Mobile) - Pro Feature
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isPremium) BackgroundSecondary else BackgroundSecondary.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (!isPremium) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Locked",
+                                            tint = Color(0xFF8B5CF6),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = "Use AI Curated Dashboard",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isPremium) TextPrimary else TextSecondary
+                                    )
+                                }
+                                Text(
+                                    text = if (isPremium) {
+                                        "Let Gemini AI curate your dashboard with trending content"
+                                    } else {
+                                        "Upgrade to Pro to enable AI-curated dashboard"
+                                    },
+                                    fontSize = 12.sp,
+                                    color = TextSecondary,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+
+                            Switch(
+                                checked = profile?.aiCuratedEnabled ?: false,
+                                enabled = isPremium && !isTogglingAiCuration,
+                                onCheckedChange = { enabled ->
+                                    onTogglingAiCurationChange(true)
+                                    coroutineScope.launch {
+                                        profile?.let { currentProfile ->
+                                            // When disabling AI curation, remove GEMINI collections
+                                            val updatedCollections = if (!enabled) {
+                                                currentProfile.dashboardCollections.filter {
+                                                    it.type != com.purestream.data.model.CollectionType.GEMINI
+                                                }
+                                            } else {
+                                                currentProfile.dashboardCollections
+                                            }
+
+                                            val updatedProfile = currentProfile.copy(
+                                                aiCuratedEnabled = enabled,
+                                                dashboardCollections = updatedCollections,
+                                                aiFeaturedMovieRatingKey = if (!enabled) null else currentProfile.aiFeaturedMovieRatingKey
+                                            )
+                                            profileRepository.updateProfile(updatedProfile)
+
+                                            // Update UI immediately
+                                            onProfileUpdated(updatedProfile)
+
+                                            if (enabled) {
+                                                // Navigate to loading screen to process AI curation
+                                                onNavigateToLoading()
+                                            }
+
+                                            // Small delay to show feedback, then re-enable
+                                            kotlinx.coroutines.delay(300)
+                                            onTogglingAiCurationChange(false)
+                                        }
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF8B5CF6),
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = Color(0xFF4B5563),
+                                    disabledCheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                    disabledCheckedTrackColor = Color(0xFF8B5CF6).copy(alpha = 0.4f),
+                                    disabledUncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                    disabledUncheckedTrackColor = Color(0xFF4B5563).copy(alpha = 0.4f)
+                                )
+                            )
+                        }
+                    }
 
                     // Default button
                     val interactionSource = remember { MutableInteractionSource() }
@@ -1161,8 +1555,14 @@ private fun DashboardCustomizationTabContent(
                                             }
                                         }.sortedBy { it.order }
 
+                                        // Keep current library selection - do NOT reset
+                                        // User wants defaults from currently selected library
+
                                         // 2. Update Database
-                                        val updatedProfile = currentProfile.copy(dashboardCollections = resetList)
+                                        val updatedProfile = currentProfile.copy(
+                                            dashboardCollections = resetList,
+                                            preferredMovieLibraryId = selectedDashboardLibraryId
+                                        )
                                         profileRepository.updateProfile(updatedProfile)
 
                                         // 3. Update Local UI State Immediately (Fixes delay issue)
@@ -1197,6 +1597,61 @@ private fun DashboardCustomizationTabContent(
                             )
                         }
                     }
+
+                    // Library Dropdown for Dashboard Collections (Mobile) - Pro Feature
+                    if (movieLibraries.size > 1) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Filter collections by library:",
+                                    fontSize = 14.sp,
+                                    color = if (isPremium) TextSecondary else TextSecondary.copy(alpha = 0.5f),
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+
+                                if (!isPremium) {
+                                    Icon(
+                                        imageVector = androidx.compose.material.icons.Icons.Default.Lock,
+                                        contentDescription = "Locked - Premium Feature",
+                                        tint = Color(0xFF8B5CF6),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+
+                            LibraryDropdown(
+                                libraries = movieLibraries,
+                                selectedLibraryId = selectedDashboardLibraryId,
+                                onLibrarySelected = { libraryId ->
+                                    if (isPremium) {
+                                        selectedDashboardLibraryId = libraryId
+                                        // Save to profile
+                                        coroutineScope.launch {
+                                            profile?.let { currentProfile ->
+                                                profileRepository.updateProfile(
+                                                    currentProfile.copy(preferredDashboardLibraryId = libraryId)
+                                                )
+                                                android.util.Log.d("DashboardCustomization", "Saved dashboard library: $libraryId")
+                                                // Wait for database update to complete before refreshing
+                                                kotlinx.coroutines.delay(100)
+                                                // Notify home screen to refresh
+                                                onPreferredLibraryChange()
+                                            }
+                                        }
+                                    }
+                                },
+                                isMobile = true,
+                                isLocked = !isPremium
+                            )
+                        }
+                    }
                 }
             } else {
                 // TV: Row layout with button to the right
@@ -1218,7 +1673,12 @@ private fun DashboardCustomizationTabContent(
                             text = if (isPremium) {
                                 "Press select to rearrange, hold select to disable."
                             } else {
-                                "Upgrade to Pro to customize your home screen layout."
+                                val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
+                                if (currentLevel >= 20) {
+                                    "Press select to rearrange, hold select to disable."
+                                } else {
+                                    "Reach Level 20 or upgrade to Pro to customize your home screen layout."
+                                }
                             },
                             fontSize = 12.sp,
                             color = if (isPremium) TextSecondary.copy(alpha = 0.8f) else Color(0xFF8B5CF6),
@@ -1255,7 +1715,7 @@ private fun DashboardCustomizationTabContent(
                             .focusRequester(dashboardCustomizationFocusRequester)
                             .focusProperties {
                                 up = dashboardCustomizationTabFocusRequester
-                                down = firstCollectionFocusRequester
+                                down = aiToggleFocusRequester  // Navigate to AI toggle
                             }
                             .focusable(interactionSource = interactionSource)
                             .clickable(enabled = isPremium) {
@@ -1273,8 +1733,14 @@ private fun DashboardCustomizationTabContent(
                                             }
                                         }.sortedBy { it.order }
 
+                                        // Keep current library selection - do NOT reset
+                                        // User wants defaults from currently selected library
+
                                         // 2. Update Database
-                                        val updatedProfile = currentProfile.copy(dashboardCollections = resetList)
+                                        val updatedProfile = currentProfile.copy(
+                                            dashboardCollections = resetList,
+                                            preferredMovieLibraryId = selectedDashboardLibraryId
+                                        )
                                         profileRepository.updateProfile(updatedProfile)
 
                                         // 3. Update Local UI State Immediately
@@ -1335,6 +1801,198 @@ private fun DashboardCustomizationTabContent(
             }
         }
 
+        // AI Curated Dashboard Toggle (TV only)
+        if (!isMobile) {
+            item {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isFocused by interactionSource.collectIsFocusedAsState()
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 8.dp)
+                        .focusRequester(aiToggleFocusRequester)
+                        .focusProperties {
+                            up = dashboardCustomizationFocusRequester  // Navigate to Default button
+                            down = if (movieLibraries.size > 1) {
+                                libraryDropdownFocusRequester  // Go to dropdown if visible
+                            } else {
+                                firstCollectionFocusRequester  // Go directly to collections if no dropdown
+                            }
+                        }
+                        .focusable(interactionSource = interactionSource)
+                        .then(
+                            if (isFocused) {
+                                Modifier.border(
+                                    width = 3.dp,
+                                    color = Color(0xFF8B5CF6),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                            } else {
+                                Modifier
+                            }
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isPremium) BackgroundSecondary else BackgroundSecondary.copy(alpha = 0.5f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (!isPremium) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Locked",
+                                        tint = Color(0xFF8B5CF6),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Use AI Curated Dashboard",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isPremium) TextPrimary else TextSecondary
+                                )
+                            }
+                            Text(
+                                text = if (isPremium) {
+                                    "Let Gemini AI curate your dashboard with trending content"
+                                } else {
+                                    "Upgrade to Pro to enable AI-curated dashboard"
+                                },
+                                fontSize = 12.sp,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Switch(
+                            checked = profile?.aiCuratedEnabled ?: false,
+                            enabled = isPremium && !isTogglingAiCuration,
+                            onCheckedChange = { enabled ->
+                                onTogglingAiCurationChange(true)
+                                coroutineScope.launch {
+                                    profile?.let { currentProfile ->
+                                        // When disabling AI curation, remove GEMINI collections
+                                        val updatedCollections = if (!enabled) {
+                                            currentProfile.dashboardCollections.filter {
+                                                it.type != com.purestream.data.model.CollectionType.GEMINI
+                                            }
+                                        } else {
+                                            currentProfile.dashboardCollections
+                                        }
+
+                                        val updatedProfile = currentProfile.copy(
+                                            aiCuratedEnabled = enabled,
+                                            dashboardCollections = updatedCollections,
+                                            aiFeaturedMovieRatingKey = if (!enabled) null else currentProfile.aiFeaturedMovieRatingKey
+                                        )
+                                        profileRepository.updateProfile(updatedProfile)
+
+                                        // Update UI immediately
+                                        onProfileUpdated(updatedProfile)
+
+                                        if (enabled) {
+                                            // Navigate to loading screen to process AI curation
+                                            onNavigateToLoading()
+                                        }
+
+                                        // Small delay to show feedback, then re-enable
+                                        kotlinx.coroutines.delay(300)
+                                        onTogglingAiCurationChange(false)
+                                    }
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF8B5CF6),
+                                uncheckedThumbColor = Color.White,
+                                uncheckedTrackColor = Color(0xFF4B5563),
+                                disabledCheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                disabledCheckedTrackColor = Color(0xFF8B5CF6).copy(alpha = 0.4f),
+                                disabledUncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                disabledUncheckedTrackColor = Color(0xFF4B5563).copy(alpha = 0.4f)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // Library Dropdown for Dashboard Collections (TV only) - Pro Feature
+        if (!isMobile && movieLibraries.size > 1) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Filter collections by library:",
+                            fontSize = 14.sp,
+                            color = if (isPremium) TextSecondary else TextSecondary.copy(alpha = 0.5f)
+                        )
+
+                        if (!isPremium) {
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Default.Lock,
+                                contentDescription = "Locked - Premium Feature",
+                                tint = Color(0xFF8B5CF6),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    LibraryDropdown(
+                        libraries = movieLibraries,
+                        selectedLibraryId = selectedDashboardLibraryId,
+                        onLibrarySelected = { libraryId ->
+                            if (isPremium) {
+                                selectedDashboardLibraryId = libraryId
+                                // Save to profile
+                                coroutineScope.launch {
+                                    profile?.let { currentProfile ->
+                                        val updatedProfile = currentProfile.copy(
+                                            preferredDashboardLibraryId = libraryId
+                                        )
+                                        profileRepository.updateProfile(updatedProfile)
+                                        android.util.Log.d("DashboardCustomization", "Saved dashboard library: $libraryId")
+                                        // Wait for database update to complete before refreshing
+                                        kotlinx.coroutines.delay(100)
+                                        // Notify home screen to refresh
+                                        onPreferredLibraryChange()
+                                    }
+                                }
+                            }
+                        },
+                        isMobile = false,
+                        dropdownFocusRequester = libraryDropdownFocusRequester,
+                        upFocusRequester = aiToggleFocusRequester,  // Navigate up to AI toggle
+                        downFocusRequester = firstCollectionFocusRequester,
+                        isLocked = !isPremium
+                    )
+                }
+            }
+        }
+
         // Loading state
         if (isLoading) {
             item {
@@ -1384,10 +2042,14 @@ private fun DashboardCustomizationTabContent(
                         Modifier
                     }
 
-                    // "Up" navigation ONLY for the very first item (now points to Default button)
+                    // "Up" navigation ONLY for the very first item
                     val upNavigationModifier = if (isTopItem) {
                         Modifier.focusProperties {
-                            up = dashboardCustomizationFocusRequester // Points to Default button
+                            up = if (movieLibraries.size > 1) {
+                                libraryDropdownFocusRequester  // Go to dropdown if visible
+                            } else {
+                                aiToggleFocusRequester  // Go directly to AI toggle if no dropdown
+                            }
                         }
                     } else {
                         Modifier // No focus properties = natural LazyColumn navigation
@@ -1556,10 +2218,14 @@ private fun DashboardCustomizationTabContent(
                         Modifier
                     }
 
-                    // "Up" navigation ONLY for the top item (when no enabled items) - points to Default button
+                    // "Up" navigation ONLY for the top item (when no enabled items)
                     val upNavigationModifier = if (isTopItem) {
                         Modifier.focusProperties {
-                            up = dashboardCustomizationFocusRequester // Points to Default button
+                            up = if (movieLibraries.size > 1) {
+                                libraryDropdownFocusRequester  // Go to dropdown if visible
+                            } else {
+                                aiToggleFocusRequester  // Go directly to AI toggle if no dropdown
+                            }
                         }
                     } else {
                         Modifier // No focus properties = natural LazyColumn navigation
@@ -2011,7 +2677,7 @@ private fun LogoutTabContent(
             )
 
             Text(
-                text = "Logout from PureStream",
+                text = "Logout from Pure Stream",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary
@@ -2195,6 +2861,37 @@ private fun ProfileInfoCard(profile: Profile, isPremium: Boolean = false) {
                 }
             }
         }
+
+        // Push level indicator to the right
+        Spacer(modifier = Modifier.weight(1f))
+
+        // Level text before the indicator
+        Text(
+            text = "Level",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary,
+            modifier = Modifier.padding(end = 12.dp)
+        )
+
+        // Circular level indicator
+        val (currentLevel, wordsIntoLevel, wordsRequired) = remember(profile.totalFilteredWordsCount) {
+            LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
+        }
+        val levelProgress = remember(wordsIntoLevel, wordsRequired) {
+            if (wordsRequired > 0) {
+                wordsIntoLevel.toFloat() / wordsRequired.toFloat()
+            } else {
+                0f
+            }
+        }
+
+        CircularLevelIndicator(
+            currentLevel = currentLevel,
+            progress = levelProgress,
+            size = 56.dp,
+            strokeWidth = 4.dp
+        )
     }
 }
 
@@ -2202,17 +2899,26 @@ private fun ProfileInfoCard(profile: Profile, isPremium: Boolean = false) {
 private fun isFilterLevelEditable(profile: Profile?, isPremium: Boolean): Boolean {
     // Child profiles are always locked to STRICT
     if (profile?.profileType == ProfileType.CHILD) return false
-    // Free users are locked to MILD
-    if (!isPremium) return false
-    // Premium adult users can change filter levels
+
+    // Check if user has Pro subscription OR reached level 15
+    val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
+    val hasProOrLevel15 = isPremium || currentLevel >= 15
+
+    // Free users without level 15 are locked to MILD
+    if (!hasProOrLevel15) return false
+
+    // Premium adult users or level 15+ users can change filter levels
     return true
 }
 
 // Helper function to get the restriction message
 private fun getFilterRestrictionMessage(profile: Profile?, isPremium: Boolean): String {
+    val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
+    val hasProOrLevel15 = isPremium || currentLevel >= 15
+
     return when {
         profile?.profileType == ProfileType.CHILD -> "Child profiles are locked to Strict filtering for safety"
-        !isPremium -> "Upgrade to Pro to customize filter levels"
+        !hasProOrLevel15 -> "Reach Level 15 or upgrade to Pro to customize filter levels"
         else -> ""
     }
 }
@@ -2384,7 +3090,7 @@ private fun MuteDurationSetting(
         }
 
         Text(
-            text = if (isPremium) "How long to mute audio when profanity is detected: ${currentDuration}ms" else "Upgrade to Pro to customize mute duration (locked at ${currentDuration}ms)",
+            text = if (isPremium) "How long to mute audio when profanity is detected: ${currentDuration}ms" else "Reach Level 15 or upgrade to Pro to customize mute duration (locked at ${currentDuration}ms)",
             fontSize = 12.sp,
             color = if (isPremium) TextSecondary else Color(0xFF8B5CF6),
             modifier = Modifier.padding(bottom = 8.dp)
@@ -2807,7 +3513,7 @@ private fun CustomProfanitySetting(
         }
 
         Text(
-            text = if (isPremium) description else "Upgrade to Pro to add custom words",
+            text = if (isPremium) description else "Reach Level 15 or upgrade to Pro to add custom words",
             fontSize = 12.sp,
             color = if (isPremium) TextSecondary else Color(0xFF8B5CF6),
             modifier = Modifier.padding(bottom = 8.dp)
@@ -2833,7 +3539,7 @@ private fun CustomProfanitySetting(
                     onValueChange = { if (isPremium) inputText = it },
                     placeholder = {
                         Text(
-                            text = if (isPremium) placeholder else "Pro feature locked",
+                            text = if (isPremium) placeholder else "Locked (Level 15 or Pro)",
                             fontSize = 14.sp,
                             color = TextTertiary
                         )
@@ -2950,7 +3656,7 @@ private fun WhitelistProfanitySetting(
         }
 
         Text(
-            text = if (isPremium) description else "Upgrade to Pro to whitelist words",
+            text = if (isPremium) description else "Reach Level 15 or upgrade to Pro to whitelist words",
             fontSize = 12.sp,
             color = if (isPremium) TextSecondary else Color(0xFF8B5CF6),
             modifier = Modifier.padding(bottom = 8.dp)
@@ -2976,7 +3682,7 @@ private fun WhitelistProfanitySetting(
                     onValueChange = { if (isPremium) inputText = it },
                     placeholder = {
                         Text(
-                            text = if (isPremium) placeholder else "Pro feature locked",
+                            text = if (isPremium) placeholder else "Locked (Level 15 or Pro)",
                             fontSize = 14.sp,
                             color = TextTertiary
                         )
@@ -3254,290 +3960,94 @@ private fun PureStreamProTabContent(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                // Free Plan Card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(320.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF1F2937)
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Column(
+                    // Free Plan Card
+                    Card(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.Start
+                            .fillMaxWidth()
+                            .height(320.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF1F2937)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        // Free Plan Header
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.Start
                         ) {
-                            Icon(
-                                Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Free Plan",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
-
-                        Text(
-                            text = "Perfect for getting started with content filtering",
-                            fontSize = 11.sp,
-                            color = Color(0xFF9CA3AF),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-
-                        // Price
-                        Text(
-                            text = "$0/month",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Features
-                        val freeFeatures = listOf(
-                            "1 Adult Profile",
-                            "Basic Profanity Filtering (Mild Level)",
-                            "Content Analysis & Warnings",
-                            "Access to Your Full Plex Library",
-                            "Smart Recommendations",
-                            "No Ads. Ever."
-                        )
-
-                        freeFeatures.forEach { feature ->
+                            // Free Plan Header
                             Row(
-                                verticalAlignment = Alignment.Top,
-                                modifier = Modifier.padding(vertical = 2.dp)
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.Check,
+                                    Icons.Default.Shield,
                                     contentDescription = null,
                                     tint = Color(0xFF10B981),
-                                    modifier = Modifier.size(12.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = feature,
-                                    fontSize = 10.sp,
-                                    color = Color.White,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        // Free Plan Status
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(36.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Current Plan",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF10B981)
-                            )
-                        }
-                    }
-                }
-
-                // Pro Plan Card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(400.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color(0xFF8B5CF6).copy(alpha = 0.2f)
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF8B5CF6))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.Start
-                    ) {
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        // Pro Plan Header with Most Popular Badge
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                Icons.Default.Star,
-                                contentDescription = null,
-                                tint = Color(0xFF8B5CF6),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Pure Stream Pro",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            // Most Popular Badge - now directly to the right of the title
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        color = Color(0xFFFBBF24),
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "MOST POPULAR",
-                                    fontSize = 8.sp,
+                                    text = "Free Plan",
+                                    fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.Black
+                                    color = Color.White
                                 )
                             }
-                        }
 
-                        Text(
-                            text = "The complete family streaming solution",
-                            fontSize = 11.sp,
-                            color = Color(0xFF9CA3AF),
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        )
-
-                        // Price
-                        Text(
-                            text = "$4.99/month or $49.99/year (17% annual savings)",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-
-                        // Everything in Free plus text
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    color = Color(0xFF8B5CF6).copy(alpha = 0.3f),
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                                .padding(6.dp)
-                        ) {
                             Text(
-                                text = "Everything in Free, plus:",
-                                fontSize = 10.sp,
-                                color = Color.White,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
+                                text = "Perfect for getting started with content filtering",
+                                fontSize = 11.sp,
+                                color = Color(0xFF9CA3AF),
+                                modifier = Modifier.padding(vertical = 4.dp)
                             )
-                        }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                            // Price
+                            Text(
+                                text = "$0/month",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
 
-                        // Pro Features
-                        val proFeatures = listOf(
-                            "Unlimited User Profiles (Adult & Child)",
-                            "Customizable Filtering Levels (None to Strict)",
-                            "Custom Word Blacklist & Whitelist",
-                            "Detailed Media Profanity Analysis",
-                            "Curated Dashboard with Plex Collection Integration",
-                            "Access to All Future Upgrades"
-                        )
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                        proFeatures.forEach { feature ->
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = Color(0xFF8B5CF6),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = feature,
-                                    fontSize = 10.sp,
-                                    color = Color.White,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                            // Features
+                            val freeFeatures = listOf(
+                                "1 Adult Profile",
+                                "Basic Profanity Filtering (Mild Level)",
+                                "Content Analysis & Warnings",
+                                "Access to Your Full Plex Library",
+                                "Smart Recommendations",
+                                "No Ads. Ever."
+                            )
 
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        // Split Upgrade Buttons - only show when not premium
-                        if (!isPremium) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                // Monthly Plan Button
-                                Button(
-                                    onClick = onMonthlyUpgradeClick,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .focusRequester(upgradeButtonFocusRequester)
-                                        .focusProperties {
-                                            up = contentFocusRequester
-                                            left = sidebarFocusRequester
-                                        },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF6366F1),
-                                        contentColor = Color.White
-                                    ),
-                                    shape = RoundedCornerShape(6.dp)
+                            freeFeatures.forEach { feature ->
+                                Row(
+                                    verticalAlignment = Alignment.Top,
+                                    modifier = Modifier.padding(vertical = 2.dp)
                                 ) {
-                                    Text(
-                                        text = "Monthly Plan",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(12.dp)
                                     )
-                                }
-                                
-                                // Annual Plan Button
-                                Button(
-                                    onClick = onAnnualUpgradeClick,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .focusProperties {
-                                            up = contentFocusRequester
-                                            left = sidebarFocusRequester
-                                        },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF8B5CF6),
-                                        contentColor = Color.White
-                                    ),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Annual Plan",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                        text = feature,
+                                        fontSize = 10.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.weight(1f)
                                     )
                                 }
                             }
-                        } else {
-                            // Pro Plan Status
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            // Free Plan Status
                             Box(
                                 modifier = Modifier.fillMaxWidth().height(36.dp),
                                 contentAlignment = Alignment.Center
@@ -3546,12 +4056,208 @@ private fun PureStreamProTabContent(
                                     text = "Current Plan",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF8B5CF6)
+                                    color = Color(0xFF10B981)
                                 )
                             }
                         }
                     }
-                }
+
+                    // Pro Plan Card
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(400.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF8B5CF6).copy(alpha = 0.2f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF8B5CF6))
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            // Pro Plan Header with Most Popular Badge
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = Color(0xFF8B5CF6),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Pure Stream Pro",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                // Most Popular Badge - now directly to the right of the title
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            color = Color(0xFFFBBF24),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "MOST POPULAR",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.Black
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "The complete family streaming solution",
+                                fontSize = 11.sp,
+                                color = Color(0xFF9CA3AF),
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+
+                            // Price
+                            Text(
+                                text = "$4.99/month or $49.99/year (17% annual savings)",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+
+                            // Everything in Free plus text
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        color = Color(0xFF8B5CF6).copy(alpha = 0.3f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(6.dp)
+                            ) {
+                                Text(
+                                    text = "Everything in Free, plus:",
+                                    fontSize = 10.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Pro Features
+                            val proFeatures = listOf(
+                                "Unlimited User Profiles (Adult & Child)",
+                                "Customizable Filtering Levels (None to Strict)",
+                                "Custom Word Blacklist & Whitelist",
+                                "Detailed Media Profanity Analysis",
+                                "Curated Dashboard with Plex Collection Integration",
+                                "Access to All Future Upgrades"
+                            )
+
+                            proFeatures.forEach { feature ->
+                                Row(
+                                    verticalAlignment = Alignment.Top,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color(0xFF8B5CF6),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = feature,
+                                        fontSize = 10.sp,
+                                        color = Color.White,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.weight(1f))
+
+                            // Split Upgrade Buttons - only show when not premium
+                            if (!isPremium) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    // Monthly Plan Button
+                                    Button(
+                                        onClick = onMonthlyUpgradeClick,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .focusRequester(upgradeButtonFocusRequester)
+                                            .focusProperties {
+                                                up = contentFocusRequester
+                                                left = sidebarFocusRequester
+                                            },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF6366F1),
+                                            contentColor = Color.White
+                                        ),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "Monthly Plan",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+
+                                    // Annual Plan Button
+                                    Button(
+                                        onClick = onAnnualUpgradeClick,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .focusProperties {
+                                                up = contentFocusRequester
+                                                left = sidebarFocusRequester
+                                            },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = Color(0xFF8B5CF6),
+                                            contentColor = Color.White
+                                        ),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "Annual Plan",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            } else {
+                                // Pro Plan Status
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "Current Plan",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF8B5CF6)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 // TV: Horizontal row (existing layout)
@@ -3817,7 +4523,7 @@ private fun PureStreamProTabContent(
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     }
-                                    
+
                                     // Annual Plan Button
                                     Button(
                                         onClick = onAnnualUpgradeClick,
@@ -4076,4 +4782,3 @@ private fun ComingSoonFeatureCard(
         }
     }
 }
-

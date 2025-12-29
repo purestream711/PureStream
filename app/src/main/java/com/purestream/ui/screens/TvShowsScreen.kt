@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.purestream.data.model.*
 import com.purestream.ui.components.LeftSidebar
 import com.purestream.ui.components.BottomNavigation
+import com.purestream.ui.components.LibraryDropdown
 import com.purestream.ui.theme.*
 import com.purestream.ui.theme.tvCardFocusIndicator
 import com.purestream.ui.theme.tvButtonFocus
@@ -38,12 +39,17 @@ import com.purestream.ui.theme.animatedPosterBorder
 import com.purestream.utils.rememberIsMobile
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun TvShowsScreen(
     currentProfile: Profile?,
     tvShows: List<TvShow>,
+    libraries: List<PlexLibrary> = emptyList(),
+    selectedLibraryId: String? = null,
     isLoading: Boolean,
     error: String?,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
@@ -56,72 +62,106 @@ fun TvShowsScreen(
     onTvShowClick: (TvShow) -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
+    onLibrarySelected: (String) -> Unit = {},
     isLoadingMore: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val isMobile = rememberIsMobile()
-    
+
+    // Bottom navigation visibility for mobile (auto-hide on scroll)
+    var isBottomNavVisible by remember { mutableStateOf(true) }
+
+    // Scroll detection for auto-hiding bottom nav (mobile only)
+    if (isMobile) {
+        LaunchedEffect(gridState) {
+            var previousFirstVisibleItemIndex = gridState.firstVisibleItemIndex
+            var previousFirstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset
+
+            snapshotFlow {
+                Pair(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+            }.collect { (currentIndex, currentOffset) ->
+                // Determine scroll direction
+                val isScrollingDown = when {
+                    currentIndex > previousFirstVisibleItemIndex -> true
+                    currentIndex < previousFirstVisibleItemIndex -> false
+                    else -> currentOffset > previousFirstVisibleItemScrollOffset
+                }
+
+                // Show nav when at top, hide when scrolling down, show when scrolling up
+                isBottomNavVisible = when {
+                    currentIndex == 0 && currentOffset < 100 -> true  // Always show at top
+                    isScrollingDown -> false  // Hide when scrolling down
+                    else -> true  // Show when scrolling up
+                }
+
+                previousFirstVisibleItemIndex = currentIndex
+                previousFirstVisibleItemScrollOffset = currentOffset
+            }
+        }
+    }
+
     // Focus management (TV only)
     val sidebarFocusRequester = remember { FocusRequester() }
     val gridFocusRequester = remember { FocusRequester() }
-    
+    val dropdownFocusRequester = remember { FocusRequester() }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
     ) {
-        
+
         if (isMobile) {
-            // Mobile Layout: Column with content on top, bottom navigation at bottom
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Main Content Area - TV Shows Grid (takes remaining space)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(Color.Transparent)
-                ) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Screen Title
-                Text(
-                    text = "TV Shows",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
-                    modifier = Modifier.padding(horizontal = 32.dp, vertical = if (isMobile) 48.dp else 24.dp)
-                )
-                
-                // Content based on state
-                when {
-                    isLoading -> {
-                        LoadingContent(modifier = Modifier.fillMaxSize())
+            // Mobile Layout: Use Box to overlay bottom nav on top of content
+            Box(modifier = Modifier.fillMaxSize()) {
+
+                // Main content - fills entire screen
+                Column(modifier = Modifier.fillMaxSize()) {
+
+                    // Library Dropdown (animated visibility)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isBottomNavVisible && libraries.size > 1,
+                        enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
+                                androidx.compose.animation.slideInVertically(animationSpec = androidx.compose.animation.core.tween(300)),
+                        exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
+                               androidx.compose.animation.slideOutVertically(animationSpec = androidx.compose.animation.core.tween(300))
+                    ) {
+                        LibraryDropdown(
+                            libraries = libraries,
+                            selectedLibraryId = selectedLibraryId,
+                            onLibrarySelected = onLibrarySelected,
+                            isMobile = true,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 56.dp, bottom = 8.dp)
+                        )
                     }
-                    error != null -> {
-                        // Check if this is a "no libraries selected" error vs a genuine error
-                        if (error.contains("No TV Show Library Available") || error.contains("no TV show libraries selected")) {
-                            NoLibrariesSelectedContent(
-                                message = error,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            ErrorContent(
-                                error = error,
-                                onRetry = onRetry,
+
+                    // Content based on state
+                    when {
+                        isLoading -> {
+                            LoadingContent(modifier = Modifier.fillMaxSize())
+                        }
+                        error != null -> {
+                            // Check if this is a "no libraries selected" error vs a genuine error
+                            if (error.contains("No TV Show Library Available") || error.contains("no TV show libraries selected")) {
+                                NoLibrariesSelectedContent(
+                                    message = error,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                ErrorContent(
+                                    error = error,
+                                    onRetry = onRetry,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        tvShows.isEmpty() -> {
+                            EmptyContent(
+                                message = "No TV shows found in your Plex library",
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
-                    }
-                    tvShows.isEmpty() -> {
-                        EmptyContent(
-                            message = "No TV shows found in your Plex library",
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    else -> {
+                        else -> {
                         // TV Shows Grid - using provided gridState to preserve scroll position
                         
                         // Pagination logic - detect when near end of list
@@ -160,71 +200,77 @@ fun TvShowsScreen(
                             }
                         }
                         
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(if (isMobile) 3 else 6),
-                            state = gridState,
-                            contentPadding = PaddingValues(
-                                start = if (isMobile) 16.dp else 32.dp, 
-                                end = if (isMobile) 16.dp else 32.dp, 
-                                bottom = if (isMobile) 16.dp else 32.dp
-                            ),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .let { mod ->
-                                    if (isMobile) {
-                                        mod
-                                    } else {
-                                        mod.focusRequester(gridFocusRequester)
-                                            .focusProperties {
-                                                left = sidebarFocusRequester
-                                            }
-                                    }
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                state = gridState,
+                                contentPadding = PaddingValues(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 8.dp,
+                                    bottom = 80.dp // Always add space for bottom nav overlay
+                                ),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(tvShows) { tvShow ->
+                                    TvShowGridCard(
+                                        tvShow = tvShow,
+                                        onClick = { onTvShowClick(tvShow) },
+                                        focusRequester = null,
+                                        isMobile = true
+                                    )
                                 }
-                        ) {
-                            items(tvShows) { tvShow ->
-                                TvShowGridCard(
-                                    tvShow = tvShow,
-                                    onClick = { onTvShowClick(tvShow) },
-                                    focusRequester = if (isMobile) null else tvShowFocusRequesters[tvShow.id],
-                                    isMobile = isMobile
-                                )
-                            }
-                            
-                            // Loading indicator at bottom when loading more
-                            if (isLoadingMore) {
-                                item {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = Color.White.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(32.dp)
-                                        )
+
+                                // Loading indicator at bottom when loading more
+                                if (isLoadingMore) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(32.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
+
+                // Bottom Navigation (Overlay) - animated visibility
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isBottomNavVisible,
+                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
+                            androidx.compose.animation.slideInVertically(
+                                animationSpec = androidx.compose.animation.core.tween(300),
+                                initialOffsetY = { it }
+                            ),
+                    exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
+                           androidx.compose.animation.slideOutVertically(
+                               animationSpec = androidx.compose.animation.core.tween(300),
+                               targetOffsetY = { it }
+                           ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                ) {
+                    BottomNavigation(
+                        currentProfile = currentProfile,
+                        onHomeClick = onHomeClick,
+                        onSearchClick = onSearchClick,
+                        onMoviesClick = onMoviesClick,
+                        onTvShowsClick = { /* Already on TV shows */ },
+                        onSettingsClick = onSettingsClick,
+                        onProfileClick = onSwitchUser,
+                        currentSection = "tv_shows"
+                    )
                 }
-                
-                // Bottom Navigation for Mobile
-                BottomNavigation(
-                    currentProfile = currentProfile,
-                    onHomeClick = onHomeClick,
-                    onSearchClick = onSearchClick,
-                    onMoviesClick = onMoviesClick,
-                    onTvShowsClick = { /* Already on TV shows */ },
-                    onSettingsClick = onSettingsClick,
-                    onProfileClick = onSwitchUser,
-                    currentSection = "tv_shows"
-                )
             }
         } else {
             // TV Layout: Row with sidebar and content
@@ -263,15 +309,18 @@ fun TvShowsScreen(
                     Column(
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        // Screen Title
-                        Text(
-                            text = "TV Shows",
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary,
-                            modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
-                        )
-                        
+                        // Library Dropdown (TV)
+                        if (libraries.size > 1) {
+                            LibraryDropdown(
+                                libraries = libraries,
+                                selectedLibraryId = selectedLibraryId,
+                                onLibrarySelected = onLibrarySelected,
+                                isMobile = false,
+                                dropdownFocusRequester = dropdownFocusRequester,
+                                modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp)
+                            )
+                        }
+
                         // Content based on state - TV layout
                         when {
                             isLoading -> {
@@ -343,7 +392,12 @@ fun TvShowsScreen(
                                 LazyVerticalGrid(
                                     columns = GridCells.Fixed(6),
                                     state = gridState,
-                                    contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp),
+                                    contentPadding = PaddingValues(
+                                        start = 32.dp,
+                                        end = 32.dp,
+                                        top = if (libraries.size <= 1) 32.dp else 0.dp,
+                                        bottom = 32.dp
+                                    ),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp),
                                     modifier = Modifier
@@ -351,6 +405,9 @@ fun TvShowsScreen(
                                         .focusRequester(gridFocusRequester)
                                         .focusProperties {
                                             left = sidebarFocusRequester
+                                            if (libraries.size > 1) {
+                                                up = dropdownFocusRequester
+                                            }
                                         }
                                 ) {
                                     items(tvShows) { tvShow ->

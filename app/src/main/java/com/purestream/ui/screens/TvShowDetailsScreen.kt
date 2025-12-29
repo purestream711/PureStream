@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -830,17 +831,19 @@ fun EpisodeCard(
             }
         }
 
-            // Progress bar at bottom
+            // Progress bar at bottom (hide when 90%+ complete)
             progressPercentage?.let { progress ->
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .align(Alignment.BottomCenter),
-                    color = Color(0xFFF5B800),
-                    trackColor = Color(0xFF374151)
-                )
+                if (progress < 0.90f) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .align(Alignment.BottomCenter),
+                        color = Color(0xFFF5B800),
+                        trackColor = Color(0xFF374151)
+                    )
+                }
             }
         }
     }
@@ -964,17 +967,19 @@ fun EpisodeGridCard(
                 }
             }
 
-            // Progress bar at bottom
+            // Progress bar at bottom (hide when 90%+ complete)
             progressPercentage?.let { progress ->
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .align(Alignment.BottomCenter),
-                    color = Color(0xFFF5B800),
-                    trackColor = Color(0xFF374151)
-                )
+                if (progress < 0.90f) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .align(Alignment.BottomCenter),
+                        color = Color(0xFFF5B800),
+                        trackColor = Color(0xFF374151)
+                    )
+                }
             }
         }
     }
@@ -1493,6 +1498,7 @@ fun MobileTvShowHeroSection(
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
 
@@ -1570,7 +1576,8 @@ fun MobileTvShowHeroSection(
                     color = Color(0xFFE0E0E0),
                     lineHeight = 16.sp,
                     maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
                 )
             }
 

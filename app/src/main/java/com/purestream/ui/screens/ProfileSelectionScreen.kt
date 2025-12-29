@@ -40,6 +40,7 @@ import com.purestream.data.model.ProfileType
 import com.purestream.data.model.ProfanityFilterLevel
 import com.purestream.ui.theme.NetflixDarkGray
 import com.purestream.utils.rememberIsMobile
+import com.purestream.utils.LevelCalculator
 import androidx.compose.foundation.lazy.LazyColumn
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -55,6 +56,12 @@ fun ProfileSelectionScreen(
 ) {
     val isMobile = rememberIsMobile()
     var showDeleteMode by remember { mutableStateOf(false) }
+    var profileToDelete by remember { mutableStateOf<Profile?>(null) }
+
+    // Intercept back button to trigger proper cleanup in MainActivity
+    androidx.activity.compose.BackHandler {
+        onBackClick()
+    }
 
     // Focus requesters for navigation
     val manageButtonFocusRequester = remember { FocusRequester() }
@@ -67,18 +74,76 @@ fun ProfileSelectionScreen(
         List(profiles.size) { FocusRequester() }
     }
 
-    // Set initial focus to first profile or create profile button
-    LaunchedEffect(profiles, isPremium) {
-        val validProfiles = if (isPremium) {
-            profiles
-        } else {
-            profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
+    // Handle profile deletion with proper focus management
+    LaunchedEffect(profileToDelete) {
+        profileToDelete?.let { profile ->
+            // Calculate remaining profiles BEFORE deleting to decide focus target
+            val remainingProfiles = profiles.filter { it.id != profile.id }
+            val validProfilesCount = if (isPremium) {
+                remainingProfiles.size
+            } else {
+                remainingProfiles.count { it.profileType != ProfileType.CHILD }
+            }
+
+            if (validProfilesCount == 0) {
+                // No profiles will be left - prepare to exit manage mode
+                showDeleteMode = false
+                
+                // Perform deletion
+                onDeleteProfile(profile)
+                
+                // Wait for UI to update and show Create button
+                kotlinx.coroutines.delay(100)
+                try {
+                    createProfileFocusRequester.requestFocus()
+                } catch (e: Exception) {
+                    android.util.Log.w("ProfileSelectionScreen", "Failed to focus Create button: ${e.message}")
+                }
+            } else {
+                // Profiles will still exist - safe to focus Cancel button
+                // Focus BEFORE deletion to avoid focus being lost when item disappears
+                try {
+                    manageButtonFocusRequester.requestFocus()
+                } catch (e: Exception) {
+                    android.util.Log.w("ProfileSelectionScreen", "Failed to focus Cancel button: ${e.message}")
+                }
+                
+                // Perform deletion
+                onDeleteProfile(profile)
+                
+                // Optional: Try focusing again after delay just in case first attempt failed
+                kotlinx.coroutines.delay(100)
+                try {
+                    manageButtonFocusRequester.requestFocus()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+
+            profileToDelete = null
         }
-        if (validProfiles.isNotEmpty()) {
-            firstProfileFocusRequester.requestFocus()
-        } else {
-            // When no valid profiles exist, focus the "Add Profile" button
-            createProfileFocusRequester.requestFocus()
+    }
+
+    // Set initial focus to first profile or create profile button
+    // Only run this when not in delete mode to avoid stealing focus from Cancel button during deletion
+    LaunchedEffect(profiles, isPremium, showDeleteMode) {
+        if (!showDeleteMode) {
+            val validProfiles = if (isPremium) {
+                profiles
+            } else {
+                profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
+            }
+            
+            try {
+                if (validProfiles.isNotEmpty()) {
+                    firstProfileFocusRequester.requestFocus()
+                } else {
+                    // When no valid profiles exist, focus the "Add Profile" button
+                    createProfileFocusRequester.requestFocus()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("ProfileSelectionScreen", "Failed to set initial focus: ${e.message}")
+            }
         }
     }
 
@@ -156,7 +221,7 @@ fun ProfileSelectionScreen(
                                 profile = profile,
                                 showDeleteMode = showDeleteMode,
                                 onClick = { onProfileSelect(profile) },
-                                onDelete = { onDeleteProfile(profile) },
+                                onDelete = { profileToDelete = profile },
                                 onEdit = { onEditProfile(profile) },
                                 editButtonFocusRequester = profileEditButtonFocusRequesters[index],
                                 deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
@@ -218,7 +283,7 @@ fun ProfileSelectionScreen(
                 } else {
                     // TV: Horizontal scrolling with LazyRow (original layout)
                     LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(32.dp),
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
                         contentPadding = PaddingValues(horizontal = 32.dp)
                     ) {
                         // Limit profile access for free users - filter out child profiles and limit adult profiles to 1
@@ -233,7 +298,7 @@ fun ProfileSelectionScreen(
                                 profile = profile,
                                 showDeleteMode = showDeleteMode,
                                 onClick = { onProfileSelect(profile) },
-                                onDelete = { onDeleteProfile(profile) },
+                                onDelete = { profileToDelete = profile },
                                 onEdit = { onEditProfile(profile) },
                                 editButtonFocusRequester = profileEditButtonFocusRequesters[index],
                                 deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
@@ -253,7 +318,7 @@ fun ProfileSelectionScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
                 // Manage Profiles button with animation - TV only (mobile has it inside LazyColumn)
                 if (validProfiles.isNotEmpty() && !isMobile) {
@@ -277,7 +342,8 @@ fun ProfileSelectionScreen(
                             contentColor = Color.White
                         ),
                         modifier = Modifier
-                            .padding(bottom = 24.dp)
+                            .width(if (showDeleteMode) 90.dp else 150.dp)
+                            .height(32.dp)
                             .focusRequester(manageButtonFocusRequester)
                             .focusProperties {
                                 up = if (showDeleteMode && profileEditButtonFocusRequesters.isNotEmpty()) {
@@ -287,7 +353,8 @@ fun ProfileSelectionScreen(
                                 }
                             }
                             .hoverable(manageButtonInteractionSource)
-                            .focusable(interactionSource = manageButtonInteractionSource)
+                            .focusable(interactionSource = manageButtonInteractionSource),
+                        contentPadding = PaddingValues(4.dp)
                     ) {
                         Text(if (showDeleteMode) "Cancel" else "Manage Profiles")
                     }
@@ -316,7 +383,7 @@ fun ProfileCard(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(160.dp)
+            .width(140.dp)
             .then(
                 if (!showDeleteMode) {
                     // Normal mode: full interactivity
@@ -366,7 +433,7 @@ fun ProfileCard(
             // Fallback to text avatar if image not found
             Box(
                 modifier = Modifier
-                    .size(120.dp)
+                    .size(100.dp)
                     .then(
                         if (!showDeleteMode) {
                             Modifier.animatedProfileBorder(interactionSource = interactionSource)
@@ -382,19 +449,19 @@ fun ProfileCard(
             ) {
                 Text(
                     text = profile.name.take(2).uppercase(),
-                    fontSize = 32.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Profile Name
         Text(
             text = profile.name,
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = Color.White,
             textAlign = TextAlign.Center
@@ -409,6 +476,22 @@ fun ProfileCard(
                 .background(
                     color = if (profile.profileType == ProfileType.CHILD)
                         Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFF6366F1).copy(alpha = 0.2f),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                )
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Level Display
+        val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
+        Text(
+            text = "Level $currentLevel",
+            fontSize = 12.sp,
+            color = Color(0xFF8B5CF6), // Purple color
+            modifier = Modifier
+                .background(
+                    color = Color(0xFF8B5CF6).copy(alpha = 0.2f),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                 )
                 .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -541,7 +624,7 @@ fun CreateProfileCard(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(160.dp)
+            .width(140.dp)
             .then(
                 if (focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
@@ -556,7 +639,7 @@ fun CreateProfileCard(
     ) {
         Box(
             modifier = Modifier
-                .size(120.dp)
+                .size(100.dp)
                 .background(
                     color = Color(0xFF374151),
                     shape = CircleShape
@@ -571,11 +654,11 @@ fun CreateProfileCard(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         Text(
             text = "Add Profile",
-            fontSize = 16.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = Color(0xFFB3B3B3),
             textAlign = TextAlign.Center

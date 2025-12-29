@@ -59,6 +59,10 @@ import com.purestream.ui.theme.tvIconFocusIndicator
 import com.purestream.ui.theme.tvButtonFocus
 import com.purestream.ui.theme.animatedPosterBorder
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun SearchScreen(
@@ -82,6 +86,9 @@ fun SearchScreen(
 ) {
     val isMobile = rememberIsMobile()
 
+    // Bottom navigation visibility for mobile (auto-hide on scroll)
+    var isBottomNavVisible by remember { mutableStateOf(true) }
+
     // Focus management (TV only)
     val sidebarFocusRequester = remember { FocusRequester() }
     val searchBarFocusRequester = remember { FocusRequester() }
@@ -104,21 +111,11 @@ fun SearchScreen(
     ) {
 
         if (isMobile) {
-            // Mobile Layout: Column with content on top, bottom navigation at bottom
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Main Content Area - Search with results (takes remaining space)
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .background(Color.Transparent)
-                ) {
-                    // Mobile Search Layout
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
+            // Mobile Layout: Use Box to overlay bottom nav on top of content
+            Box(modifier = Modifier.fillMaxSize()) {
+
+                // Main content - fills entire screen
+                Column(modifier = Modifier.fillMaxSize()) {
                         // Search Header Section (Mobile)
                         Column(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
@@ -224,24 +221,41 @@ fun SearchScreen(
                                     focusRequester = resultsFocusRequester,
                                     modifier = Modifier.fillMaxSize(),
                                     isMobile = true,
-                                    onLoadMore = onLoadMore
+                                    onLoadMore = onLoadMore,
+                                    onBottomNavVisibilityChange = { isVisible -> isBottomNavVisible = isVisible }
                                 )
                             }
                         }
-                    }
                 }
 
-                // Bottom Navigation for Mobile
-                BottomNavigation(
-                    currentProfile = currentProfile,
-                    onHomeClick = onHomeClick,
-                    onSearchClick = { /* Already on search */ },
-                    onMoviesClick = onMoviesClick,
-                    onTvShowsClick = onTvShowsClick,
-                    onSettingsClick = onSettingsClick,
-                    onProfileClick = onSwitchUser,
-                    currentSection = "search"
-                )
+                // Bottom Navigation (Overlay) - animated visibility
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isBottomNavVisible,
+                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
+                            androidx.compose.animation.slideInVertically(
+                                animationSpec = androidx.compose.animation.core.tween(300),
+                                initialOffsetY = { it }
+                            ),
+                    exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
+                           androidx.compose.animation.slideOutVertically(
+                               animationSpec = androidx.compose.animation.core.tween(300),
+                               targetOffsetY = { it }
+                           ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                ) {
+                    BottomNavigation(
+                        currentProfile = currentProfile,
+                        onHomeClick = onHomeClick,
+                        onSearchClick = { /* Already on search */ },
+                        onMoviesClick = onMoviesClick,
+                        onTvShowsClick = onTvShowsClick,
+                        onSettingsClick = onSettingsClick,
+                        onProfileClick = onSwitchUser,
+                        currentSection = "search"
+                    )
+                }
             }
         } else {
             // TV Layout: Row with sidebar and content
@@ -548,7 +562,8 @@ private fun SearchBar(
             focusRequester: FocusRequester,
             modifier: Modifier = Modifier,
             isMobile: Boolean = false,
-            onLoadMore: () -> Unit = {}
+            onLoadMore: () -> Unit = {},
+            onBottomNavVisibilityChange: (Boolean) -> Unit = {}
         ) {
             val gridState = rememberLazyGridState()
 
@@ -565,13 +580,44 @@ private fun SearchBar(
                     }
             }
 
+            // Scroll detection for auto-hiding bottom nav (mobile only)
+            if (isMobile) {
+                LaunchedEffect(gridState) {
+                    var previousFirstVisibleItemIndex = gridState.firstVisibleItemIndex
+                    var previousFirstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset
+
+                    snapshotFlow {
+                        Pair(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                    }.collect { (currentIndex, currentOffset) ->
+                        // Determine scroll direction
+                        val isScrollingDown = when {
+                            currentIndex > previousFirstVisibleItemIndex -> true
+                            currentIndex < previousFirstVisibleItemIndex -> false
+                            else -> currentOffset > previousFirstVisibleItemScrollOffset
+                        }
+
+                        // Show nav when at top, hide when scrolling down, show when scrolling up
+                        val isVisible = when {
+                            currentIndex == 0 && currentOffset < 100 -> true  // Always show at top
+                            isScrollingDown -> false  // Hide when scrolling down
+                            else -> true  // Show when scrolling up
+                        }
+
+                        onBottomNavVisibilityChange(isVisible)
+
+                        previousFirstVisibleItemIndex = currentIndex
+                        previousFirstVisibleItemScrollOffset = currentOffset
+                    }
+                }
+            }
+
             LazyVerticalGrid(
                 columns = GridCells.Fixed(if (isMobile) 3 else 6),
                 state = gridState,
                 contentPadding = PaddingValues(
                     start = if (isMobile) 16.dp else 32.dp,
                     end = if (isMobile) 16.dp else 32.dp,
-                    bottom = if (isMobile) 16.dp else 32.dp
+                    bottom = if (isMobile) 80.dp else 32.dp // Always add space for bottom nav overlay on mobile
                 ),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),

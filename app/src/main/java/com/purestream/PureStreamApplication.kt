@@ -1,9 +1,12 @@
 package com.purestream
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
@@ -66,6 +69,13 @@ class PureStreamApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
+            .components {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+            }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25) // Use 25% of available RAM for image cache

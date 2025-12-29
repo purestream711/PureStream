@@ -64,6 +64,12 @@ interface PlexApiService {
         @Path("episodeId") episodeId: String,
         @Header("X-Plex-Token") token: String
     ): Response<PlexResponse<Episode>>
+
+    @GET("library/metadata/{collectionId}")
+    suspend fun getCollectionDetails(
+        @Path("collectionId") collectionId: String,
+        @Header("X-Plex-Token") token: String
+    ): Response<PlexResponse<PlexCollection>>
     
     @GET("hubs/search")
     suspend fun performSearch(
@@ -125,6 +131,12 @@ interface PlexApiService {
     @GET("library/metadata/{collectionId}/children")
     suspend fun getCollectionItems(
         @Path("collectionId") collectionId: String,
+        @Header("X-Plex-Token") token: String
+    ): Response<PlexResponse<Movie>>
+
+    @GET
+    suspend fun getItemsFromUrl(
+        @Url url: String,
         @Header("X-Plex-Token") token: String
     ): Response<PlexResponse<Movie>>
 

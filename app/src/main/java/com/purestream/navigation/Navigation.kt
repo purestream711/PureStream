@@ -9,7 +9,7 @@ object Destinations {
     const val PROFILE_SELECTION = "profile_selection"
     const val PROFILE_CREATE = "profile_create"
     const val PROFILE_EDIT = "profile_edit/{profileId}"
-    const val LOADING = "loading"
+    const val LOADING = "loading?workRequestId={workRequestId}"
     const val UPGRADE = "upgrade"
     const val HOME = "home"
     const val MOVIES = "movies"
@@ -21,6 +21,14 @@ object Destinations {
     const val MEDIA_PLAYER_WITH_URL = "media_player_with_url/{videoUrl}/{title}/{contentId}"
     const val SETTINGS = "settings"
     const val SEARCH = "search"
+
+    fun loading(workRequestId: String? = null): String {
+        return if (workRequestId != null) {
+            "loading?workRequestId=$workRequestId"
+        } else {
+            "loading"
+        }
+    }
     
     fun movieDetails(movieId: String) = "movie_details/$movieId"
     fun tvShowDetails(showId: String) = "tv_show_details/$showId"

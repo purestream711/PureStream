@@ -1,4 +1,5 @@
 package com.purestream.ui.viewmodel
+import android.content.Context
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -35,7 +36,8 @@ data class MovieDetailsState(
 )
 
 class MovieDetailsViewModel(
-    private val plexRepository: PlexRepository = PlexRepository(),
+    context: Context,
+    private val plexRepository: PlexRepository = PlexRepository(context),
     private val profanityFilter: ProfanityFilter = ProfanityFilter(),
     private val openSubtitlesRepository: OpenSubtitlesRepository = OpenSubtitlesRepository(ProfanityFilter()),
     private val subtitleAnalysisRepository: SubtitleAnalysisRepository? = null
@@ -270,6 +272,22 @@ class MovieDetailsViewModel(
                 try {
                     android.util.Log.d("MovieDetailsViewModel", "Checking analysis for movie: ${movie.title} (${movie.ratingKey})")
                     
+                    // Check for Demo Mode based on movie ID
+                    if (movie.ratingKey.startsWith("demo_")) {
+                        android.util.Log.d("MovieDetailsViewModel", "Demo movie detected: ${movie.ratingKey}")
+                        val demoAnalysis = com.purestream.data.demo.DemoData.getDemoSubtitleAnalysis(movie.ratingKey)
+                        if (demoAnalysis != null) {
+                            android.util.Log.d("MovieDetailsViewModel", "Loaded demo analysis for: ${movie.title}")
+                            _uiState.value = _uiState.value.copy(
+                                subtitleAnalysisResult = demoAnalysis,
+                                subtitleAnalysisError = null,
+                                canAnalyzeProfanity = false, // Disable button since analysis exists
+                                existingFilterLevels = ProfanityFilterLevel.values().toList()
+                            )
+                            return@launch
+                        }
+                    }
+
                     // Get existing filter levels for this content (filter-agnostic)
                     val existingFilterLevels = openSubtitlesRepository.getExistingFilterLevels(movie.ratingKey)
                     val hasAnyAnalysis = existingFilterLevels.isNotEmpty()
@@ -340,6 +358,27 @@ class MovieDetailsViewModel(
             try {
                 android.util.Log.d("MovieDetailsViewModel", "Starting progressive analysis for: ${movie.title}, priority level: $priorityLevel")
                 
+                // Check for Demo Mode
+                if (movie.ratingKey.startsWith("demo_")) {
+                    android.util.Log.d("MovieDetailsViewModel", "Demo mode analysis requested for: ${movie.title}")
+                    delay(1500) // Simulate network delay
+                    
+                    val demoAnalysis = com.purestream.data.demo.DemoData.getDemoSubtitleAnalysis(movie.ratingKey)
+                    if (demoAnalysis != null) {
+                        _uiState.value = _uiState.value.copy(
+                            isAnalyzingSubtitles = false,
+                            subtitleAnalysisResult = demoAnalysis,
+                            canAnalyzeProfanity = false
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            isAnalyzingSubtitles = false,
+                            subtitleAnalysisError = "Demo analysis data not found"
+                        )
+                    }
+                    return@launch
+                }
+
                 // Check existing analyses
                 val existingLevels = openSubtitlesRepository.getExistingFilterLevels(movie.ratingKey)
                 val allLevels = ProfanityFilterLevel.values().toList()
@@ -609,6 +648,10 @@ class MovieDetailsViewModel(
                 android.util.Log.e("MovieDetailsViewModel", "✗ Error loading progress: ${e.message}", e)
             }
         }
+    }
+
+    fun reset() {
+        _uiState.value = MovieDetailsState()
     }
 
 }

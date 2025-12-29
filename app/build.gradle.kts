@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -12,10 +14,26 @@ android {
         applicationId = "com.purestream"
         minSdk = 28
         targetSdk = 35
-        versionCode = 37
-        versionName = "1.0.29"
-        
+        versionCode = 71
+        versionName = "1.2.13"
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Read Gemini API key from local.properties
+        val properties = Properties()
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.inputStream().use { stream ->
+                properties.load(stream)
+            }
+        }
+        buildConfigField("String", "GEMINI_API_KEY", "\"${properties.getProperty("GEMINI_API_KEY") ?: ""}\"")
+
+        // Support 16 KB page sizes for Google Play requirement
+        ndk {
+            //noinspection ChromeOsAbiSupport
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -54,9 +72,16 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false  // LibVLC 3.6.3 has proper 16KB page size support
+        }
     }
 }
 
@@ -90,14 +115,18 @@ dependencies {
     
     // Image loading
     implementation(libs.coil.compose)
-    
+    implementation("io.coil-kt:coil-gif:2.5.0")
+
+    // Palette API for color extraction
+    implementation("androidx.palette:palette-ktx:1.0.0")
+
     // Database
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
     
     // Media playback - LibVLC only for universal codec support
-    implementation("org.videolan.android:libvlc-all:4.0.0-eap20")
+    implementation("org.videolan.android:libvlc-all:3.6.5")  // Latest stable release with 16KB page size support
     
     // Work Manager
     implementation(libs.androidx.work.runtime.ktx)
@@ -111,6 +140,9 @@ dependencies {
 
     // WebView for in-app authentication
     implementation("androidx.webkit:webkit:1.8.0")
+
+    // Gemini AI
+    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
 
     // Testing
     androidTestImplementation(platform(libs.androidx.compose.bom))

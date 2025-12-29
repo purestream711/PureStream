@@ -8,6 +8,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -22,6 +23,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -51,6 +55,12 @@ import com.purestream.data.model.AuthenticationStatus
 import com.purestream.utils.rememberIsMobile
 import com.purestream.ui.theme.NetflixDarkGray
 import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -58,6 +68,7 @@ fun ConnectPlexScreen(
     onConnectPlexClick: () -> Unit,
     onNavigateToPin: (String, String) -> Unit,
     onNavigateToWebAuth: () -> Unit = {},
+    onDemoModeClick: () -> Unit = {},
     viewModel: PlexAuthViewModel = viewModel()
 ) {
     val isMobile = rememberIsMobile()
@@ -141,7 +152,9 @@ fun ConnectPlexScreen(
                     OAuthLoginLayout(
                         viewModel = viewModel,
                         onConnectPlexClick = onConnectPlexClick,
-                        onNavigateToWebAuth = onNavigateToWebAuth
+                        onNavigateToWebAuth = onNavigateToWebAuth,
+                        onDemoModeClick = onDemoModeClick,
+                        isMobile = isMobile
                     )
                 }
 
@@ -187,7 +200,9 @@ fun ConnectPlexScreen(
                         OAuthLoginLayout(
                             viewModel = viewModel,
                             onConnectPlexClick = onConnectPlexClick,
-                            onNavigateToWebAuth = onNavigateToWebAuth
+                            onNavigateToWebAuth = onNavigateToWebAuth,
+                            onDemoModeClick = onDemoModeClick,
+                            isMobile = isMobile
                         )
                     }
 
@@ -213,15 +228,43 @@ fun ConnectPlexScreen(
 fun OAuthLoginLayout(
     viewModel: PlexAuthViewModel,
     onConnectPlexClick: () -> Unit,
-    onNavigateToWebAuth: () -> Unit = {}
+    onNavigateToWebAuth: () -> Unit = {},
+    onDemoModeClick: () -> Unit = {},
+    isMobile: Boolean = false
 ) {
     val context = LocalContext.current
     val loginButtonFocusRequester = remember { FocusRequester() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var shouldRequestFocus by remember { mutableStateOf(true) }
 
     // Auto-focus the login button for TV remote navigation
+    // LaunchedEffect for initial composition (cold start)
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100) // Brief delay to ensure UI is ready
+        kotlinx.coroutines.delay(50) // Minimal delay for UI initialization
         loginButtonFocusRequester.requestFocus()
+    }
+
+    // Listen for lifecycle changes to detect when navigating back
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // Trigger focus request when screen becomes visible (navigate back)
+                shouldRequestFocus = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // Request focus whenever shouldRequestFocus is set to true
+    LaunchedEffect(shouldRequestFocus) {
+        if (shouldRequestFocus) {
+            kotlinx.coroutines.delay(50) // Minimal delay
+            loginButtonFocusRequester.requestFocus()
+            shouldRequestFocus = false
+        }
     }
 
     Card(
@@ -245,23 +288,39 @@ fun OAuthLoginLayout(
         ) {
             Text(
                 text = "Login with Plex",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = "Authenticate securely through Plex's official authentication page.",
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 color = Color(0xFFB3B3B3),
                 textAlign = TextAlign.Center,
-                lineHeight = 18.sp
+                lineHeight = 16.sp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val loginButtonInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val isLoginButtonFocused by loginButtonInteractionSource.collectIsFocusedAsState()
+
+            // Mobile: Always yellow/black for Login with Plex
+            // TV: Purple when not focused, yellow when focused
+            val loginBackgroundColor = if (isMobile) {
+                Color(0xFFF5B800)
+            } else {
+                if (isLoginButtonFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+            }
+            val loginContentColor = if (isMobile) {
+                Color.Black
+            } else {
+                if (isLoginButtonFocused) Color.Black else Color.White
+            }
 
             Button(
                 onClick = {
@@ -274,12 +333,13 @@ fun OAuthLoginLayout(
                     .height(56.dp)
                     .focusRequester(loginButtonFocusRequester),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE5A00D),
-                    contentColor = Color.Black
+                    containerColor = loginBackgroundColor,
+                    contentColor = loginContentColor
                 ),
                 shape = RoundedCornerShape(12.dp),
                 enabled = viewModel.oauthStatus != AuthenticationStatus.LOADING &&
-                         viewModel.oauthStatus != AuthenticationStatus.SUCCESS
+                         viewModel.oauthStatus != AuthenticationStatus.SUCCESS,
+                interactionSource = loginButtonInteractionSource
             ) {
                 if (viewModel.oauthStatus == AuthenticationStatus.LOADING ||
                     viewModel.oauthStatus == AuthenticationStatus.WAITING_FOR_PIN) {
@@ -360,9 +420,59 @@ fun OAuthLoginLayout(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Demo Mode Button
+            val demoButtonInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+            val isDemoButtonFocused by demoButtonInteractionSource.collectIsFocusedAsState()
+
+            // Mobile: Always purple/white for Demo Mode
+            // TV: Purple when not focused, yellow when focused
+            val demoBackgroundColor = if (isMobile) {
+                Color(0xFF8B5CF6)
+            } else {
+                if (isDemoButtonFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+            }
+            val demoContentColor = if (isMobile) {
+                Color.White
+            } else {
+                if (isDemoButtonFocused) Color.Black else Color.White
+            }
+
+            Button(
+                onClick = { 
+                    onDemoModeClick()
+                    viewModel.enterDemoMode() 
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = demoBackgroundColor,
+                    contentColor = demoContentColor
+                ),
+                shape = RoundedCornerShape(12.dp),
+                interactionSource = demoButtonInteractionSource
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Preview, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Demo Mode", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Try the app with sample content",
+                fontSize = 11.sp,
+                color = Color(0xFFB3B3B3),
+                textAlign = TextAlign.Center
+            )
+
             // Success navigation
             LaunchedEffect(viewModel.oauthStatus) {
-                if (viewModel.oauthStatus == AuthenticationStatus.SUCCESS) {
+                if (viewModel.oauthStatus == AuthenticationStatus.SUCCESS && !viewModel.justLoggedOut) {
                     delay(500)
                     onConnectPlexClick()
                 }

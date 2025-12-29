@@ -21,7 +21,23 @@ data class Profile(
     val whitelistedWords: List<String> = emptyList(),
     val audioMuteDuration: Int = 2000, // milliseconds
     val dashboardCollections: List<DashboardCollection> = getDefaultCollections(),
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val preferredMovieLibraryId: String? = null, // Preferred library for movies screen
+    val preferredTvShowLibraryId: String? = null, // Preferred library for TV shows screen
+    val preferredDashboardLibraryId: String? = null, // Preferred library for dashboard collections
+
+    // AI Curation fields
+    val aiCuratedEnabled: Boolean = false,
+    val lastAiCurationTimestamp: Long = 0L,
+    val aiFeaturedMovieRatingKey: String? = null,  // Stores rating key of AI-curated featured movie
+
+    // Default profile setting
+    val isDefaultProfile: Boolean = false,  // Automatically sign into this profile on startup
+
+    // RPG-style level-up tracker fields
+    val totalFilteredWordsCount: Int = 0,
+    val currentLevel: Int = 1,
+    val wordsFilteredThisLevel: Int = 0
 ) {
     companion object {
         fun getDefaultCollections(): List<DashboardCollection> {

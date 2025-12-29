@@ -1,4 +1,5 @@
 package com.purestream.ui.viewmodel
+import android.content.Context
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -45,7 +46,8 @@ data class TvShowDetailsState(
 )
 
 class TvShowDetailsViewModel(
-    private val plexRepository: PlexRepository = PlexRepository(),
+    context: Context,
+    private val plexRepository: PlexRepository = PlexRepository(context),
     private val profanityFilter: ProfanityFilter = ProfanityFilter(),
     private val openSubtitlesRepository: OpenSubtitlesRepository = OpenSubtitlesRepository(ProfanityFilter()),
     private val subtitleAnalysisRepository: SubtitleAnalysisRepository? = null

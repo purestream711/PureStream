@@ -426,6 +426,22 @@ class PremiumStatusManager private constructor(private val context: Context) : P
         billingRepository?.disconnect()
         Log.d(tag, "PremiumStatusManager cleaned up")
     }
+
+    /**
+     * Temporarily set premium status for testing/demo purposes.
+     * @param durationMs Duration in milliseconds to keep the temporary status.
+     */
+    fun setTemporaryPremiumStatus(durationMs: Long) {
+        scope.launch {
+            Log.d(tag, "Activating temporary premium status for ${durationMs}ms")
+            _premiumStatus.value = PremiumStatusState.Premium
+            
+            delay(durationMs)
+            
+            Log.d(tag, "Temporary premium status expired, reverting...")
+            refreshPremiumStatus()
+        }
+    }
 }
 
 /**

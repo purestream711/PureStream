@@ -1,5 +1,6 @@
 package com.purestream.ui.viewmodel
 
+import android.content.Context
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -28,7 +29,7 @@ data class ContentState<T>(
 )
 
 abstract class BaseContentViewModel<T>(
-    protected val plexRepository: PlexRepository = PlexRepository()
+    protected val plexRepository: PlexRepository
 ) : ViewModel() {
 
     protected val _uiState = MutableStateFlow(ContentState<T>())
@@ -47,6 +48,9 @@ abstract class BaseContentViewModel<T>(
     // Watch progress tracking
     protected var watchProgressRepository: WatchProgressRepository? = null
     protected var currentProfileId: String = ""
+
+    // Profile tracking for library preferences
+    private var currentProfile: com.purestream.data.model.Profile? = null
 
     // Abstract methods for type-specific operations
     protected abstract val libraryType: String
@@ -216,6 +220,10 @@ abstract class BaseContentViewModel<T>(
                 // Filter for libraries of the specific type
                 val typeLibraries = allLibraries.filter { it.type == libraryType }
                 
+                android.util.Log.d(this::class.simpleName, "Filtering libraries for type '$libraryType'")
+                android.util.Log.d(this::class.simpleName, "Available type libraries: ${typeLibraries.map { "${it.title} (${it.key})" }}")
+                android.util.Log.d(this::class.simpleName, "Selected libraries: $selectedLibraries")
+                
                 // Further filter by user's selected libraries if provided
                 val filteredLibraries = if (selectedLibraries.isNotEmpty()) {
                     typeLibraries.filter { library -> 
@@ -226,6 +234,8 @@ abstract class BaseContentViewModel<T>(
                 } else {
                     typeLibraries
                 }
+                
+                android.util.Log.d(this::class.simpleName, "Final filtered libraries: ${filteredLibraries.map { "${it.title} (${it.key})" }}")
                 
                 _uiState.value = _uiState.value.copy(
                     libraries = filteredLibraries,
@@ -239,8 +249,24 @@ abstract class BaseContentViewModel<T>(
                         isLoading = false
                     )
                 } else if (filteredLibraries.isNotEmpty() && _uiState.value.selectedLibraryId == null) {
-                    // Automatically load items from the first available library
-                    loadItems(filteredLibraries.first().key)
+                    // Try to use preferred library if available and valid
+                    val preferredLibraryId = when (libraryType) {
+                        "movie" -> currentProfile?.preferredMovieLibraryId
+                        "show" -> currentProfile?.preferredTvShowLibraryId
+                        else -> null
+                    }
+
+                    val libraryToLoad = if (preferredLibraryId != null &&
+                                            filteredLibraries.any { it.key == preferredLibraryId }) {
+                        android.util.Log.d(this::class.simpleName, "Using preferred library: $preferredLibraryId")
+                        preferredLibraryId
+                    } else {
+                        // Fallback to first available library
+                        android.util.Log.d(this::class.simpleName, "Using first available library: ${filteredLibraries.first().key}")
+                        filteredLibraries.first().key
+                    }
+
+                    loadItems(libraryToLoad)
                 } else if (typeLibraries.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         error = "No $itemTypeName libraries found on Plex server",
@@ -256,7 +282,34 @@ abstract class BaseContentViewModel<T>(
             }
         )
     }
-    
+
+    fun setCurrentProfile(profile: com.purestream.data.model.Profile) {
+        currentProfile = profile
+    }
+
+    fun selectLibrary(libraryId: String) {
+        loadItems(libraryId)
+    }
+
+    fun setPreferredLibrary(libraryId: String, profileRepository: com.purestream.data.repository.ProfileRepository, profileId: String) {
+        viewModelScope.launch {
+            try {
+                val profile = profileRepository.getProfileById(profileId)
+                profile?.let { currentProfile ->
+                    val updatedProfile = when (libraryType) {
+                        "movie" -> currentProfile.copy(preferredMovieLibraryId = libraryId)
+                        "show" -> currentProfile.copy(preferredTvShowLibraryId = libraryId)
+                        else -> currentProfile
+                    }
+                    profileRepository.updateProfile(updatedProfile)
+                    android.util.Log.d(this::class.simpleName, "Saved preferred library: $libraryId for type: $libraryType")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e(this::class.simpleName, "Failed to save preferred library: ${e.message}")
+            }
+        }
+    }
+
     fun setLastFocusedItemId(itemId: String) {
         _lastFocusedItemId.value = itemId
     }
@@ -308,5 +361,12 @@ abstract class BaseContentViewModel<T>(
                 android.util.Log.e(this::class.simpleName, "✗ Error loading progress: ${e.message}", e)
             }
         }
+    }
+
+    open fun reset() {
+        _uiState.value = ContentState()
+        allSortedItems = emptyList()
+        _lastFocusedItemId.value = null
+        currentProfile = null
     }
 }

@@ -37,6 +37,7 @@ fun VLCMediaPlayer(
     onPositionChange: (Long) -> Unit = {},
     onDurationChange: (Long) -> Unit = {},
     onPlayingStateChange: (Boolean) -> Unit = {},
+    onEnded: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -166,6 +167,7 @@ fun VLCMediaPlayer(
                         Log.d("VLCMediaPlayer", "Media end reached")
                         isPlaying = false
                         onPlayingStateChange(false)
+                        onEnded() // Trigger callback for automatic navigation
                     }
                     MediaPlayer.Event.EncounteredError -> {
                         Log.e("VLCMediaPlayer", "Media error encountered")
@@ -421,7 +423,15 @@ fun VLCMediaPlayer(
                 // Now attach to the new surface
                 player.attachViews(surface, null, false, false)
                 isAttached = true
-                
+
+                // Set aspect ratio to null to fill screen (fix letterboxing on mobile)
+                try {
+                    player.aspectRatio = null
+                    Log.d("VLCMediaPlayer", "Set aspect ratio to fill screen")
+                } catch (e: Exception) {
+                    Log.w("VLCMediaPlayer", "Could not set aspect ratio: ${e.message}")
+                }
+
                 // Start playback after attachment
                 if (isActive) {
                     delay(100) // Small delay to ensure surface is ready
@@ -494,7 +504,15 @@ fun VLCMediaPlayer(
                         player.detachViews()
                         player.attachViews(layout, null, false, false)
                         isAttached = true
-                        
+
+                        // Set aspect ratio to null to fill screen (fix letterboxing on mobile)
+                        try {
+                            player.aspectRatio = null
+                            Log.d("VLCMediaPlayer", "Set aspect ratio to fill screen")
+                        } catch (e: Exception) {
+                            Log.w("VLCMediaPlayer", "Could not set aspect ratio: ${e.message}")
+                        }
+
                         // Start playback
                         player.play()
                         Log.d("VLCMediaPlayer", "Playback started from update block")

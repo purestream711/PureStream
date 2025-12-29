@@ -1,10 +1,12 @@
 package com.purestream.ui.viewmodel
 
+import android.content.Context
 import com.purestream.data.model.TvShow
 import com.purestream.data.repository.PlexRepository
 
 class TvShowsViewModel(
-    plexRepository: PlexRepository = PlexRepository()
+    context: Context,
+    plexRepository: PlexRepository = PlexRepository(context)
 ) : BaseContentViewModel<TvShow>(plexRepository) {
     
     override val libraryType = "show"
@@ -29,7 +31,8 @@ class TvShowsViewModel(
     fun refreshTvShows() = refreshItems()
     fun setLastFocusedTvShowId(tvShowId: String) = setLastFocusedItemId(tvShowId)
     fun clearLastFocusedTvShowId() = clearLastFocusedItemId()
-    
+    fun selectTvShowLibrary(libraryId: String) = selectLibrary(libraryId)
+
     // Convenience properties for UI compatibility
     val tvShows get() = uiState.value.items
     val lastFocusedTvShowId get() = lastFocusedItemId

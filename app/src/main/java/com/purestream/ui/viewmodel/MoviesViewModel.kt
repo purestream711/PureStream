@@ -1,10 +1,12 @@
 package com.purestream.ui.viewmodel
 
+import android.content.Context
 import com.purestream.data.model.Movie
 import com.purestream.data.repository.PlexRepository
 
 class MoviesViewModel(
-    plexRepository: PlexRepository = PlexRepository()
+    context: Context,
+    plexRepository: PlexRepository = PlexRepository(context)
 ) : BaseContentViewModel<Movie>(plexRepository) {
     
     override val libraryType = "movie"
@@ -29,7 +31,8 @@ class MoviesViewModel(
     fun refreshMovies() = refreshItems()
     fun setLastFocusedMovieId(movieId: String) = setLastFocusedItemId(movieId)
     fun clearLastFocusedMovieId() = clearLastFocusedItemId()
-    
+    fun selectMovieLibrary(libraryId: String) = selectLibrary(libraryId)
+
     // Convenience properties for UI compatibility
     val movies get() = uiState.value.items
     val lastFocusedMovieId get() = lastFocusedItemId

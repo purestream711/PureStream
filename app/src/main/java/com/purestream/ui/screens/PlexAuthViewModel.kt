@@ -467,4 +467,31 @@ class PlexAuthViewModel(application: Application) : AndroidViewModel(application
     fun clearLogoutFlag() {
         justLoggedOut = false
     }
+
+    /**
+     * Enter Demo Mode - for Google Play reviewers
+     * Bypasses Plex authentication and shows demo content
+     */
+    fun enterDemoMode() {
+        Log.d("PlexAuthViewModel", "Entering Demo Mode")
+
+        // Save demo token to SharedPreferences
+        authRepository.saveAuthToken(com.purestream.data.demo.DemoData.DEMO_AUTH_TOKEN)
+
+        // Set authentication states to success
+        authStatus = AuthenticationStatus.SUCCESS
+        oauthStatus = AuthenticationStatus.SUCCESS
+        authenticationMethod = "demo"
+        authToken = com.purestream.data.demo.DemoData.DEMO_AUTH_TOKEN
+
+        Log.d("PlexAuthViewModel", "Demo Mode activated successfully")
+    }
+
+    /**
+     * Check if currently in Demo Mode
+     */
+    fun isDemoMode(): Boolean {
+        val token = authRepository.getAuthToken()
+        return com.purestream.data.demo.DemoData.isDemoToken(token)
+    }
 }

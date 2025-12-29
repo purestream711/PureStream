@@ -38,10 +38,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.PressInteraction
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.palette.graphics.Palette
+import android.graphics.drawable.BitmapDrawable
 import com.purestream.data.model.*
 import com.purestream.ui.components.LeftSidebar
 import com.purestream.ui.components.BottomNavigation
 import com.purestream.ui.components.HeroSection
+import com.purestream.ui.components.LevelUpTrackerCard
 import com.purestream.ui.theme.*
 import com.purestream.utils.rememberIsMobile
 import com.purestream.ui.theme.tvCardFocusIndicator
@@ -79,12 +83,19 @@ fun HomeScreen(
     onRetry: () -> Unit = {}
 ) {
     val isMobile = rememberIsMobile()
+
+    // Bottom navigation visibility for mobile (auto-hide on scroll)
+    var isBottomNavVisible by remember { mutableStateOf(true) }
+
     // Use featured content from "Recommended for You" section, fallback to any section
-    val displayFeaturedContent = featuredContent ?: 
+    val displayFeaturedContent = featuredContent ?:
         contentSections.find { it.title == "Recommended for You" }?.items?.firstOrNull() ?:
         contentSections.firstOrNull()?.items?.firstOrNull()
     val heroBackgroundUrl = displayFeaturedContent?.artUrl ?: "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1920&h=1080&fit=crop"
-    
+
+    // State to track image luminance for dynamic gradient adjustment
+    var imageLuminance by remember { mutableStateOf(0.5f) } // Default to medium brightness
+
     // State for dynamic colors extracted from the hero image
     val dynamicColors = remember(displayFeaturedContent?.id) {
         // Simple color scheme rotation based on content ID hash
@@ -100,10 +111,32 @@ fun HomeScreen(
     }
     
     val scrollState = rememberScrollState()
+
+    // Scroll detection for auto-hiding bottom nav (mobile only)
+    if (isMobile) {
+        LaunchedEffect(scrollState) {
+            var previousScrollOffset = scrollState.value
+
+            snapshotFlow { scrollState.value }
+                .collect { currentOffset ->
+                    val isScrollingDown = currentOffset > previousScrollOffset
+
+                    // Show nav when at top, hide when scrolling down, show when scrolling up
+                    isBottomNavVisible = when {
+                        currentOffset < 100 -> true  // Always show at top
+                        isScrollingDown -> false  // Hide when scrolling down
+                        else -> true  // Show when scrolling up
+                    }
+
+                    previousScrollOffset = currentOffset
+                }
+        }
+    }
+
     val heroPlayButtonFocusRequester = remember { FocusRequester() }
     val firstMovieFocusRequester = remember { FocusRequester() }
     val sidebarFocusRequester = remember { FocusRequester() }
-    
+
     // Set initial focus and scroll to top
     LaunchedEffect(displayFeaturedContent) {
         scrollState.scrollTo(0)
@@ -125,45 +158,69 @@ fun HomeScreen(
                 )
             }
             else -> {
-                // Use hero image background when content is loaded
+                // Use hero image background when content is loaded with Palette extraction
                 AsyncImage(
-                    model = heroBackgroundUrl,
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(heroBackgroundUrl)
+                        .allowHardware(false) // Required for Palette API to access bitmap
+                        .listener(
+                            onSuccess = { _, result ->
+                                // Extract palette from loaded image
+                                val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+                                bitmap?.let { bmp ->
+                                    val palette = Palette.from(bmp).generate()
+                                    val swatch = palette.dominantSwatch
+                                    if (swatch != null) {
+                                        val rgb = swatch.rgb
+                                        val r = (rgb shr 16 and 0xFF) / 255f
+                                        val g = (rgb shr 8 and 0xFF) / 255f
+                                        val b = (rgb and 0xFF) / 255f
+                                        // Calculate luminance (0.0 = black, 1.0 = white)
+                                        imageLuminance = 0.299f * r + 0.587f * g + 0.114f * b
+                                        android.util.Log.d("HomeScreen", "Image luminance: $imageLuminance")
+                                    }
+                                }
+                            }
+                        )
+                        .build(),
                     contentDescription = "Background",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     alpha = 1.0f // Full visibility, gradients will handle the fade
                 )
                 
-                // Clean vertical gradient: bright hero area transitioning to dark content area
+                // Dynamic vertical gradient based on image brightness
+                val isBrightImage = imageLuminance > 0.5f
+                val gradientAlphas = if (isBrightImage) {
+                    // Bright images need heavy scrim for text readability
+                    listOf(0.3f, 0.3f, 0.3f, 0.5f, 0.65f, 0.8f, 0.9f, 0.95f)
+                } else {
+                    // Dark images need subtle scrim
+                    listOf(0.02f, 0.02f, 0.02f, 0.05f, 0.15f, 0.4f, 0.6f, 0.7f)
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.02f),        // Very light top - hero area
-                                    Color.Black.copy(alpha = 0.02f),        // Keep hero area bright
-                                    Color.Black.copy(alpha = 0.02f),        // Still light - extend hero area
-                                    Color.Black.copy(alpha = 0.05f),        // Very gentle start
-                                    Color.Black.copy(alpha = 0.15f),        // Begin transition
-                                    Color.Black.copy(alpha = 0.4f),         // Transition zone
-                                    Color.Black.copy(alpha = 0.6f),         // Content area background
-                                    Color.Black.copy(alpha = 0.7f)          // Bottom content area
-                                ),
+                                colors = gradientAlphas.map { Color.Black.copy(alpha = it) },
                                 startY = 0f,
                                 endY = Float.POSITIVE_INFINITY
                             )
                         )
                 )
                 
-                // Minimal left sidebar protection
+                // Dynamic horizontal gradient for sidebar protection
+                val sidebarAlpha = if (isBrightImage) 0.8f else 0.7f
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
                             Brush.horizontalGradient(
                                 colors = listOf(
-                                    Color.Black.copy(alpha = 0.7f),         // Sidebar protection
+                                    Color.Black.copy(alpha = sidebarAlpha), // Sidebar protection
                                     Color.Black.copy(alpha = 0.1f),         // Quick fade
                                     Color.Transparent,                        // Clear center
                                     Color.Transparent
@@ -179,13 +236,13 @@ fun HomeScreen(
         
         // Content over background
         if (isMobile) {
-            // Mobile: Use column layout with bottom navigation
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Main Content Area (takes available space)
+            // Mobile: Use Box to overlay bottom nav on top of content
+            Box(modifier = Modifier.fillMaxSize()) {
+
+                // Main content - fills entire screen
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .weight(1f)
                         .background(Color.Transparent)
                         .verticalScroll(scrollState)
                 ) {
@@ -263,21 +320,49 @@ fun HomeScreen(
                                     isFirstSection = index == 0
                                 )
                             }
+
+                            // Level-Up Tracker
+                            if (currentProfile != null) {
+                                LevelUpTrackerCard(
+                                    currentProfile = currentProfile,
+                                    modifier = Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp)
+                                )
+                            }
+
+                            // Fixed bottom padding for bottom nav overlay
+                            Spacer(modifier = Modifier.height(80.dp))
                         }
                     }
                 }
-                
-                // Bottom Navigation (Mobile)
-                BottomNavigation(
-                    currentProfile = currentProfile,
-                    onHomeClick = { /* Already on home */ },
-                    onSearchClick = onSearchClick,
-                    onMoviesClick = onMoviesClick,
-                    onTvShowsClick = onTvShowsClick,
-                    onSettingsClick = onSettings,
-                    onProfileClick = onSwitchUser,
-                    currentSection = "home"
-                )
+
+                // Bottom Navigation (Overlay) - animated visibility
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isBottomNavVisible,
+                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
+                            androidx.compose.animation.slideInVertically(
+                                animationSpec = androidx.compose.animation.core.tween(300),
+                                initialOffsetY = { it }
+                            ),
+                    exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
+                           androidx.compose.animation.slideOutVertically(
+                               animationSpec = androidx.compose.animation.core.tween(300),
+                               targetOffsetY = { it }
+                           ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                ) {
+                    BottomNavigation(
+                        currentProfile = currentProfile,
+                        onHomeClick = { /* Already on home */ },
+                        onSearchClick = onSearchClick,
+                        onMoviesClick = onMoviesClick,
+                        onTvShowsClick = onTvShowsClick,
+                        onSettingsClick = onSettings,
+                        onProfileClick = onSwitchUser,
+                        currentSection = "home"
+                    )
+                }
             }
         } else {
             // TV: Horizontal layout (existing)
@@ -421,7 +506,15 @@ fun HomeScreen(
                     }
                 }
             }
-            
+
+                    // Level-Up Tracker
+                    if (currentProfile != null) {
+                        LevelUpTrackerCard(
+                            currentProfile = currentProfile,
+                            modifier = Modifier.padding(top = 24.dp, start = 48.dp, end = 48.dp)
+                        )
+                    }
+
                     // Bottom spacing
                     Spacer(modifier = Modifier.height(100.dp))
                 }
@@ -522,8 +615,7 @@ fun SimpleHeroSection(
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
-                maxLines = 1,
-                softWrap = false,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             
@@ -539,11 +631,11 @@ fun SimpleHeroSection(
                             text = year.toString(),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFFB3B3B3)
+                            color = Color.White
                         )
                     }
                 }
-                
+
                 // Duration
                 featuredContent.duration?.let { duration ->
                     if (duration > 0) {
@@ -551,7 +643,7 @@ fun SimpleHeroSection(
                             text = formatDuration(duration),
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFFB3B3B3)
+                            color = Color.White
                         )
                     }
                 }
@@ -591,7 +683,7 @@ fun SimpleHeroSection(
                                 text = String.format("%.1f", rating),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = Color(0xFFB3B3B3)
+                                color = Color.White
                             )
                         }
                     }

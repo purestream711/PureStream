@@ -18,5 +18,6 @@ data class DashboardCollection(
 
 enum class CollectionType {
     HARDCODED,  // Built-in sections like Trending Now, Popular Movies, etc.
-    PLEX        // Dynamic collections fetched from Plex server
+    PLEX,       // Dynamic collections fetched from Plex server
+    GEMINI      // AI-curated collections from Gemini API
 }

@@ -41,7 +41,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:windowSoftInputMode="adjustNothing">
+            android:windowSoftInputMode="adjustNothing"
+            android:supportsPictureInPicture="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -58,6 +60,13 @@
                     android:host="auth-callback" />
             </intent-filter>
         </activity>
+
+        <!-- Override ZXing library's CaptureActivity to remove orientation restriction -->
+        <!-- This fixes Google Play Console warning about resizability restrictions -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="unspecified"
+            tools:replace="android:screenOrientation" />
     </application>
 
 </manifest>

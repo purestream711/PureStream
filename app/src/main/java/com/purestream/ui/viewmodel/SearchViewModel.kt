@@ -1,5 +1,6 @@
 package com.purestream.ui.viewmodel
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -24,9 +25,9 @@ data class SearchUiState(
 )
 
 @OptIn(FlowPreview::class)
-class SearchViewModel : ViewModel() {
+class SearchViewModel(context: Context) : ViewModel() {
 
-    private val plexRepository = PlexRepository()
+    private val plexRepository = PlexRepository(context)
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState

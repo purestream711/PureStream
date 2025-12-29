@@ -1,5 +1,7 @@
 package com.purestream.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,11 +21,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.purestream.data.model.Profile
 import com.purestream.ui.theme.*
 import com.purestream.utils.SoundManager
+import kotlin.math.roundToInt
 
 /**
  * Bottom navigation bar for mobile devices
@@ -39,16 +43,34 @@ fun BottomNavigation(
     onSettingsClick: () -> Unit,
     onProfileClick: () -> Unit,
     currentSection: String = "home",
+    isVisible: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    // Animate the visibility with smooth slide animation
+    val offsetY by animateFloatAsState(
+        targetValue = if (isVisible) 0f else 200f, // 200dp slide down when hidden
+        animationSpec = tween(durationMillis = 300),
+        label = "bottom_nav_offset"
+    )
+
+    // Animate transparency - fully transparent when hidden
+    val alpha by animateFloatAsState(
+        targetValue = if (isVisible) 0.9f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "bottom_nav_alpha"
+    )
+
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = Color.Black.copy(alpha = 0.9f),
+        modifier = modifier
+            .fillMaxWidth()
+            .offset { IntOffset(0, offsetY.roundToInt()) },
+        color = Color.Black.copy(alpha = alpha),
         shadowElevation = 8.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically

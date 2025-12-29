@@ -1,5 +1,6 @@
 package com.purestream.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.purestream.data.model.*
@@ -22,7 +23,8 @@ data class HomeState(
 )
 
 class HomeViewModel(
-    private val plexRepository: PlexRepository = PlexRepository(),
+    context: Context,
+    private val plexRepository: PlexRepository = PlexRepository(context),
     private val profileRepository: ProfileRepository? = null
 ) : ViewModel() {
     
@@ -124,10 +126,10 @@ class HomeViewModel(
             }
 
             // Get selected libraries from current profile
-            val selectedLibraries = _uiState.value.currentProfile?.selectedLibraries ?: emptyList()
+            val allSelectedLibraries = _uiState.value.currentProfile?.selectedLibraries ?: emptyList()
 
             // Check if user has selected any libraries
-            if (selectedLibraries.isEmpty()) {
+            if (allSelectedLibraries.isEmpty()) {
                 android.util.Log.w("HomeViewModel", "No libraries selected")
                 _uiState.value = _uiState.value.copy(
                     contentSections = emptyList(),
@@ -138,15 +140,29 @@ class HomeViewModel(
                 return
             }
 
+            // Use preferredDashboardLibraryId if set, otherwise use all selected libraries
+            val preferredLibraryId = _uiState.value.currentProfile?.preferredDashboardLibraryId
+            val selectedLibraries = if (preferredLibraryId != null && allSelectedLibraries.contains(preferredLibraryId)) {
+                android.util.Log.d("HomeViewModel", "Using preferred dashboard library: $preferredLibraryId")
+                listOf(preferredLibraryId)
+            } else {
+                android.util.Log.d("HomeViewModel", "Using all selected libraries (no preferred dashboard library set)")
+                allSelectedLibraries
+            }
+
             // Get dashboard collections from current profile
-            val dashboardCollections = _uiState.value.currentProfile?.dashboardCollections
+            val dashboardCollections = _uiState.value.currentProfile?.dashboardCollections ?: emptyList()
+
+            // The dashboardCollections now contain the merged AI collections if enabled.
+            val allCollections = dashboardCollections
 
             android.util.Log.d("HomeViewModel", "=== LOAD CONTENT ===")
             android.util.Log.d("HomeViewModel", "Selected libraries: $selectedLibraries")
-            android.util.Log.d("HomeViewModel", "Dashboard collections count: ${dashboardCollections?.size ?: 0}")
+            android.util.Log.d("HomeViewModel", "Dashboard collections count: ${dashboardCollections.size}")
+            android.util.Log.d("HomeViewModel", "Total collections (merged): ${allCollections.size}")
 
             // Only log enabled collections to reduce verbosity (especially with 193+ collections)
-            val enabledCollections = dashboardCollections?.filter { it.isEnabled }?.sortedBy { it.order } ?: emptyList()
+            val enabledCollections = allCollections.filter { it.isEnabled }.sortedBy { it.order }
             android.util.Log.d("HomeViewModel", "Enabled collections count: ${enabledCollections.size}")
             enabledCollections.take(10).forEach { col ->
                 android.util.Log.d("HomeViewModel", "  [${col.order}] ${col.title} (${col.id}): type=${col.type}")
@@ -155,8 +171,12 @@ class HomeViewModel(
                 android.util.Log.d("HomeViewModel", "  ... and ${enabledCollections.size - 10} more enabled collections")
             }
 
-            // Load dashboard sections with customized collections
-            val sectionsResult = plexRepository.getHomeDashboardSections(selectedLibraries, dashboardCollections)
+            // Load dashboard sections with customized collections (merged hardcoded + AI)
+            val sectionsResult = plexRepository.getHomeDashboardSections(
+                selectedLibraries = selectedLibraries,
+                enabledCollections = allCollections,
+                profileId = _uiState.value.currentProfile?.id
+            )
 
             android.util.Log.d("HomeViewModel", "Sections result: ${if (sectionsResult.isSuccess) "SUCCESS" else "FAILURE"}")
 
@@ -167,10 +187,50 @@ class HomeViewModel(
                         android.util.Log.d("HomeViewModel", "  Section $idx: ${section.title} (${section.items.size} items)")
                     }
 
-                    // Extract featured movie from "Recommended for You" section (first movie)
-                    val featuredContentItem = sections
-                        .find { it.title == "Recommended for You" }
-                        ?.items?.firstOrNull()
+                    // Extract featured movie - use AI-curated if available, otherwise fallback
+                    var featuredContentItem: ContentItem? = null
+
+                    if (_uiState.value.currentProfile?.aiCuratedEnabled == true &&
+                        _uiState.value.currentProfile?.aiFeaturedMovieRatingKey != null) {
+                        // Use AI-curated featured movie
+                        val ratingKey = _uiState.value.currentProfile!!.aiFeaturedMovieRatingKey!!
+                        android.util.Log.d("HomeViewModel", "Using AI-curated featured movie: $ratingKey")
+
+                        // First, try to find the movie in any of the sections
+                        featuredContentItem = sections.flatMap { it.items }.find { it.id == ratingKey }
+
+                        // If not found in sections, fetch it separately from Plex
+                        if (featuredContentItem == null) {
+                            android.util.Log.d("HomeViewModel", "Featured movie not in sections, fetching separately...")
+                            val movieResult = plexRepository.getMovieById(ratingKey)
+                            movieResult.getOrNull()?.let { movie ->
+                                featuredContentItem = ContentItem(
+                                    id = movie.ratingKey,
+                                    title = movie.title,
+                                    type = ContentType.MOVIE,
+                                    thumbUrl = movie.thumbUrl,
+                                    artUrl = movie.artUrl,
+                                    summary = movie.summary,
+                                    year = movie.year,
+                                    rating = movie.rating,
+                                    duration = movie.duration,
+                                    contentRating = movie.contentRating,
+                                    profanityLevel = ProfanityLevel.UNKNOWN,
+                                    hasSubtitles = false
+                                )
+                                android.util.Log.d("HomeViewModel", "Fetched featured movie: ${movie.title}")
+                            }
+                        }
+
+                        // Fallback to "Recommended for You" if still not found
+                        if (featuredContentItem == null) {
+                            android.util.Log.w("HomeViewModel", "Featured movie not found, using fallback")
+                            featuredContentItem = sections.find { it.title == "Recommended for You" }?.items?.firstOrNull()
+                        }
+                    } else {
+                        // Use traditional "Recommended for You" first movie
+                        featuredContentItem = sections.find { it.title == "Recommended for You" }?.items?.firstOrNull()
+                    }
 
                     _uiState.value = _uiState.value.copy(
                         contentSections = sections,

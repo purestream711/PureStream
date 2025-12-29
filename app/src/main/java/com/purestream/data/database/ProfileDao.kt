@@ -9,7 +9,10 @@ interface ProfileDao {
     
     @Query("SELECT * FROM profiles ORDER BY createdAt ASC")
     fun getAllProfiles(): Flow<List<Profile>>
-    
+
+    @Query("SELECT * FROM profiles ORDER BY createdAt ASC")
+    suspend fun getAllProfilesList(): List<Profile>
+
     @Query("SELECT * FROM profiles WHERE id = :profileId")
     suspend fun getProfileById(profileId: String): Profile?
     
