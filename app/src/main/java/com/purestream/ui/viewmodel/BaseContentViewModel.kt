@@ -70,14 +70,40 @@ abstract class BaseContentViewModel<T>(
                     onSuccess = { allLibraries ->
                         // Filter for libraries of the specific type
                         val typeLibraries = allLibraries.filter { it.type == libraryType }
+                        
+                        // Further filter by user's selected libraries
+                        val filteredLibraries = if (currentProfile != null) {
+                            val selectedKeys = currentProfile!!.selectedLibraries
+                            typeLibraries.filter { library ->
+                                selectedKeys.any { key ->
+                                    library.key == key || library.title.equals(key, ignoreCase = true)
+                                }
+                            }
+                        } else {
+                            typeLibraries
+                        }
+
                         _uiState.value = _uiState.value.copy(
-                            libraries = typeLibraries,
+                            libraries = filteredLibraries,
                             isLoading = false
                         )
                         
                         // Automatically load items from the first library of this type
-                        if (typeLibraries.isNotEmpty() && _uiState.value.selectedLibraryId == null) {
-                            loadItems(typeLibraries.first().key)
+                        if (filteredLibraries.isNotEmpty() && _uiState.value.selectedLibraryId == null) {
+                            // Try to use preferred library if available
+                            val preferredLibraryId = when (libraryType) {
+                                "movie" -> currentProfile?.preferredMovieLibraryId
+                                "show" -> currentProfile?.preferredTvShowLibraryId
+                                else -> null
+                            }
+
+                            val libraryToLoad = if (preferredLibraryId != null &&
+                                                    filteredLibraries.any { lib -> lib.key == preferredLibraryId }) {
+                                preferredLibraryId
+                            } else {
+                                filteredLibraries.first().key
+                            }
+                            loadItems(libraryToLoad!!)
                         }
                     },
                     onFailure = { exception ->
@@ -222,12 +248,19 @@ abstract class BaseContentViewModel<T>(
                 
                 android.util.Log.d(this::class.simpleName, "Filtering libraries for type '$libraryType'")
                 android.util.Log.d(this::class.simpleName, "Available type libraries: ${typeLibraries.map { "${it.title} (${it.key})" }}")
-                android.util.Log.d(this::class.simpleName, "Selected libraries: $selectedLibraries")
                 
-                // Further filter by user's selected libraries if provided
-                val filteredLibraries = if (selectedLibraries.isNotEmpty()) {
+                // Further filter by user's selected libraries (mandatory if profile exists)
+                val librariesToFilterBy = if (selectedLibraries.isNotEmpty()) {
+                    selectedLibraries
+                } else {
+                    currentProfile?.selectedLibraries ?: emptyList()
+                }
+                
+                android.util.Log.d(this::class.simpleName, "Filtering by: $librariesToFilterBy")
+                
+                val filteredLibraries = if (librariesToFilterBy.isNotEmpty() || currentProfile != null) {
                     typeLibraries.filter { library -> 
-                        selectedLibraries.any { selectedLib -> 
+                        librariesToFilterBy.any { selectedLib -> 
                             library.key == selectedLib || library.title.equals(selectedLib, ignoreCase = true)
                         }
                     }
@@ -285,6 +318,10 @@ abstract class BaseContentViewModel<T>(
 
     fun setCurrentProfile(profile: com.purestream.data.model.Profile) {
         currentProfile = profile
+    }
+
+    fun getCurrentProfile(): com.purestream.data.model.Profile? {
+        return currentProfile
     }
 
     fun selectLibrary(libraryId: String) {

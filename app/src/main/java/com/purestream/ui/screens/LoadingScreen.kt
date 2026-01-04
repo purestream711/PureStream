@@ -24,7 +24,9 @@ import com.purestream.ui.viewmodel.HomeViewModel
 import com.purestream.data.model.Profile
 import com.purestream.utils.rememberIsMobile
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.core.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -59,6 +61,18 @@ fun LoadingScreen(
         targetValue = loadingProgress,
         animationSpec = tween(durationMillis = 500, easing = LinearEasing),
         label = "progress_animation"
+    )
+
+    // Shimmer for progress bar (left-to-right sweep, resets every 3 seconds)
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val progressBarShimmerOffset by infiniteTransition.animateFloat(
+        initialValue = -400f,
+        targetValue = 2000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "progress_bar_shimmer"
     )
 
     // Handle actual data loading
@@ -200,12 +214,35 @@ fun LoadingScreen(
                 // Step 3: Loading Libraries (60%)
                 currentLoadingText = loadingTexts[2]
                 loadingProgress = 0.6f
-                delay(500)
+                
+                // Trigger background loading for all ViewModels in parallel
+                // This populates the database cache while the user is still on the loading screen
+                if (homeViewModel != null && moviesViewModel != null && tvShowsViewModel != null) {
+                    android.util.Log.d("LoadingScreen", "Starting background data pre-fetch for Home, Movies, and TV Shows")
+                }
+
+                // Wait for HomeViewModel to start loading if it hasn't already
+                if (homeViewModel != null) {
+                    // Poll for completion (max 15 seconds) to avoid getting stuck
+                    var pollCount = 0
+                    while (homeViewModel.uiState.value.isLoading && pollCount < 150) {
+                        delay(100)
+                        pollCount++
+                    }
+                    android.util.Log.d("LoadingScreen", "Home data loading finished after ${pollCount * 100}ms")
+                } else {
+                    delay(500)
+                }
 
                 // Step 4: Curating Dashboard (80%)
                 currentLoadingText = loadingTexts[3]
                 loadingProgress = 0.8f
-                delay(1000)
+                
+                // Final check for Home Screen data
+                if (homeViewModel != null && homeViewModel.uiState.value.contentSections.isEmpty()) {
+                    android.util.Log.w("LoadingScreen", "Home data still empty, waiting briefly...")
+                    delay(1000)
+                }
 
                 // Step 5: Almost Ready (100%)
                 currentLoadingText = loadingTexts[4]
@@ -226,6 +263,15 @@ fun LoadingScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A), // Dark blue-gray top
+                        Color(0xFF0D0D0D), // Pure black middle
+                        Color(0xFF0D0D0D)  // Pure black bottom
+                    )
+                )
+            )
     ) {
     
     Column(
@@ -341,16 +387,44 @@ fun LoadingScreen(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Loading progress bar
-                LinearProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier
-                        .width(400.dp)
-                        .height(8.dp)
-                        .progressSemantics(),
-                    color = NetflixRed,
-                    trackColor = NetflixGray
-                )
+                // Animated Purple progress bar with shimmer (matches LevelUpCelebrationScreen)
+                Box(
+                    modifier = Modifier.width(400.dp)
+                ) {
+                    // Create purple shimmer gradient for progress bar
+                    val progressBarShimmerBrush = Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFF6B46C1),  // Darker purple
+                            AccentPurple,        // Main purple
+                            Color(0xFFC4B5FD),  // Light purple
+                            AccentPurple,        // Main purple
+                            Color(0xFF6B46C1)   // Darker purple
+                        ),
+                        start = androidx.compose.ui.geometry.Offset(progressBarShimmerOffset - 300f, 0f),
+                        end = androidx.compose.ui.geometry.Offset(progressBarShimmerOffset + 300f, 0f)
+                    )
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                    ) {
+                        // Draw background track
+                        drawRoundRect(
+                            color = NetflixGray,
+                            size = size,
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                        )
+                        
+                        // Draw animated progress
+                        val barWidth = size.width * animatedProgress
+                        drawRoundRect(
+                            brush = progressBarShimmerBrush,
+                            size = androidx.compose.ui.geometry.Size(barWidth, size.height),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                        )
+                    }
+                }
                 
                 // Progress percentage (optional visual feedback)
                 Text(
@@ -382,13 +456,19 @@ private fun setupViewModelsWithAuth(
         hvm.setPlexConnectionWithAuth(authToken)
     }
     
-    // Initialize Movies ViewModel with profile's selected libraries
+    // Initialize Movies ViewModel and trigger library load in background
     moviesViewModel?.let { mvm ->
+        mvm.reset() // Force reset to clear old data during loading phase
+        mvm.setCurrentProfile(currentProfile)
         mvm.setPlexConnectionWithAuth(authToken, currentProfile.selectedLibraries)
+        mvm.loadLibraries() // Trigger background fetch
     }
     
-    // Initialize TV Shows ViewModel with profile's selected libraries
+    // Initialize TV Shows ViewModel and trigger library load in background
     tvShowsViewModel?.let { tvm ->
+        tvm.reset() // Force reset to clear old data during loading phase
+        tvm.setCurrentProfile(currentProfile)
         tvm.setPlexConnectionWithAuth(authToken, currentProfile.selectedLibraries)
+        tvm.loadLibraries() // Trigger background fetch
     }
 }

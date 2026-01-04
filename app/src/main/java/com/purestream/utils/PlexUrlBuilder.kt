@@ -23,8 +23,12 @@ object PlexUrlBuilder {
             // Path is already a complete URL
             thumbPath
         } else {
+            // Ensure proper slash separator
+            val cleanServerUrl = serverUrl.trimEnd('/')
+            val cleanThumbPath = if (thumbPath.startsWith("/")) thumbPath else "/$thumbPath"
+            
             // Build complete URL with server base and token authentication
-            "${serverUrl}${thumbPath}?X-Plex-Token=${token}"
+            "${cleanServerUrl}${cleanThumbPath}?X-Plex-Token=${token}"
         }
     }
     

@@ -31,6 +31,7 @@ import androidx.compose.ui.focus.FocusState
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -88,12 +89,22 @@ fun CreateProfileScreen(
         modifier = modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A), // Dark blue-gray top
+                        Color(0xFF0D0D0D), // Pure black middle
+                        Color(0xFF0D0D0D)  // Pure black bottom
+                    )
+                )
+            )
             .padding(WindowInsets.navigationBars.asPaddingValues())
-            .padding(32.dp)
+            .padding(horizontal = 32.dp)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(vertical = 32.dp)
         ) {
             item {
                 Text(
@@ -137,6 +148,8 @@ fun CreateProfileScreen(
                 }
             }
             
+            item { Spacer(modifier = Modifier.height(8.dp)) }
+
             // Avatar Image Selection
             item {
                 ProfileSection(title = "Choose Avatar") {
@@ -161,6 +174,8 @@ fun CreateProfileScreen(
                 }
             }
             
+            item { Spacer(modifier = Modifier.height(8.dp)) }
+
             // Profile Type Selection
             item {
                 ProfileSection(title = "Profile Type") {
@@ -193,6 +208,8 @@ fun CreateProfileScreen(
                     }
                 }
             }
+
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
             // Default Profile Toggle
             item {
@@ -254,6 +271,8 @@ fun CreateProfileScreen(
                 }
             }
 
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+
             // Profanity Filter Level
             item {
                 ProfileSection(title = "Content Filter Level") {
@@ -291,81 +310,102 @@ fun CreateProfileScreen(
                     }
                 }
             }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
             
-            // Library Selection
+            // Library Selection Header
             item {
-                ProfileSection(title = "Select Libraries") {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            val selectAllButtonInteractionSource = remember { MutableInteractionSource() }
-                            val selectAllButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                                interactionSource = selectAllButtonInteractionSource,
-                                defaultColor = MaterialTheme.colorScheme.primary
-                            )
-                            
-                            Button(
-                                onClick = profileViewModel::selectAllLibraries,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .hoverable(selectAllButtonInteractionSource)
-                                    .focusable(interactionSource = selectAllButtonInteractionSource),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = selectAllButtonBackgroundColor,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary
-                                )
-                            ) {
-                                Text("Select All")
-                            }
-                            val clearAllButtonInteractionSource = remember { MutableInteractionSource() }
-                            val clearAllButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                                interactionSource = clearAllButtonInteractionSource,
-                                defaultColor = Color.Transparent
-                            )
-                            
-                            OutlinedButton(
-                                onClick = profileViewModel::clearLibrarySelection,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .hoverable(clearAllButtonInteractionSource)
-                                    .focusable(interactionSource = clearAllButtonInteractionSource),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = clearAllButtonBackgroundColor,
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Text("Clear All")
-                            }
-                        }
-                        
-                        if (uiState.isLoading) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
-                            }
-                        } else if (uiState.availableLibraries.isEmpty()) {
-                            Text(
-                                text = "No libraries available. Make sure you're connected to your Plex server.",
-                                color = MaterialTheme.colorScheme.error,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        } else {
-                            uiState.availableLibraries.forEach { library ->
-                                LibrarySelectionItem(
-                                    library = library,
-                                    isSelected = uiState.selectedLibraries.contains(library.key),
-                                    onClick = { profileViewModel.toggleLibrarySelection(library.key) }
-                                )
-                            }
-                        }
+                Text(
+                    text = "Select Libraries",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = com.purestream.ui.theme.TextPrimary,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+
+            // Select All / Clear All Buttons
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val selectAllButtonInteractionSource = remember { MutableInteractionSource() }
+                    val isSelectAllFocused by selectAllButtonInteractionSource.collectIsFocusedAsState()
+                    
+                    // Define colors based on focus state: Yellow background, Black text when focused
+                    val selectAllBgColor = if (isSelectAllFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+                    val selectAllContentColor = if (isSelectAllFocused) Color.Black else Color.White
+                    
+                    Button(
+                        onClick = profileViewModel::selectAllLibraries,
+                        modifier = Modifier
+                            .weight(1f)
+                            .hoverable(selectAllButtonInteractionSource)
+                            .focusable(interactionSource = selectAllButtonInteractionSource),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = selectAllBgColor,
+                            contentColor = selectAllContentColor
+                        )
+                    ) {
+                        Text("Select All")
                     }
+                    
+                    val clearAllButtonInteractionSource = remember { MutableInteractionSource() }
+                    val isClearAllFocused by clearAllButtonInteractionSource.collectIsFocusedAsState()
+                    
+                    // Define colors based on focus state: Yellow background, Black text when focused
+                    val clearAllBgColor = if (isClearAllFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+                    val clearAllContentColor = if (isClearAllFocused) Color.Black else Color.White
+                    
+                    Button(
+                        onClick = profileViewModel::clearLibrarySelection,
+                        modifier = Modifier
+                            .weight(1f)
+                            .hoverable(clearAllButtonInteractionSource)
+                            .focusable(interactionSource = clearAllButtonInteractionSource),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = clearAllBgColor,
+                            contentColor = clearAllContentColor
+                        )
+                    ) {
+                        Text("Clear All")
+                    }
+                }
+            }
+            
+            // Loading State for Libraries
+            if (uiState.isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else if (uiState.availableLibraries.isEmpty()) {
+                item {
+                    Text(
+                        text = "No libraries available. Make sure you're connected to your Plex server.",
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                // Individual Library Items - Flattened for better performance
+                items(
+                    items = uiState.availableLibraries,
+                    key = { it.key }
+                ) { library ->
+                    LibrarySelectionItem(
+                        library = library,
+                        isSelected = uiState.selectedLibraries.contains(library.key),
+                        onClick = { profileViewModel.toggleLibrarySelection(library.key) }
+                    )
                 }
             }
             

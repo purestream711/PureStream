@@ -336,4 +336,8 @@ class SubtitleAnalysisRepository(
         val filteredSubtitleFiles: Int,
         val cacheFiles: Int
     )
+
+    suspend fun getFilthiestMovieTitle(): String? {
+        return dao.getFilthiestMovieTitle()
+    }
 }

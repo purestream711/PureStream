@@ -37,7 +37,10 @@ data class Profile(
     // RPG-style level-up tracker fields
     val totalFilteredWordsCount: Int = 0,
     val currentLevel: Int = 1,
-    val wordsFilteredThisLevel: Int = 0
+    val wordsFilteredThisLevel: Int = 0,
+
+    // Achievement System
+    val unlockedAchievements: List<String> = emptyList()
 ) {
     companion object {
         fun getDefaultCollections(): List<DashboardCollection> {

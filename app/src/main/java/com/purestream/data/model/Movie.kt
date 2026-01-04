@@ -35,6 +35,11 @@ data class Movie(
     val guid: List<GuidItem>? = emptyList(),
     @SerializedName("Collection")
     val collections: List<CollectionTag>? = emptyList(),
+    @SerializedName("Genre")
+    val genres: List<CollectionTag>? = emptyList(),
+    @SerializedName("Image")
+    val images: List<PlexImage>? = emptyList(),
+    val logoUrl: String? = null,
     val hasSubtitles: Boolean = false,
     val profanityLevel: ProfanityLevel? = ProfanityLevel.UNKNOWN
 ) {
@@ -113,5 +118,12 @@ data class StreamInfo(
 data class GuidItem(
     @SerializedName("id")
     val id: String
+)
+
+data class PlexImage(
+    @SerializedName("type")
+    val type: String,
+    @SerializedName("url")
+    val url: String
 )
 

@@ -9,20 +9,20 @@ class ProfanityFilter {
     companion object {
         // MILD: Only the worst of the worst profanity
         private val MILD_WORDS = setOf(
-            "fuck", "fucking", "fucked", "fucker", "fuckers", "fucks", "fuckin'",
+            "fuck", "fucking", "fucked", "fucker", "fuckers", "fucks", "fuckin'", "fuckin'",
             "motherfuck", "motherfucker", "motherfuckers", "motherfucking",
-            "bitch", "bitches", "bitching", "bitchin'",
+            "bitch", "bitches", "bitching", "bitchin'", "bitchin'",
             "ass", "asses", "asshole", "assholes",
             "arse", "arses", "arsehole", "arseholes"
         )
         
         // MODERATE: Worst of the worst + some lesser profanity
         private val MODERATE_WORDS = MILD_WORDS + setOf(
-            "shit", "shits", "shitting", "shitter", "shite", "shitty", "shittier", "bullshit", 
-            "cunt", "cunts", "pussy", "pussies", 
-            "cock", "cocks", "cocksucker", "cocksuckers", 
+            "shit", "shits", "shitting", "shitter", "shite", "shitty", "shittier", "bullshit", "dipshit", "dipshits",
+            "cunt", "cunts", "pussy", "pussies",
+            "cock", "cocks", "cocksucker", "cocksuckers",
             "dick", "dicks", "dickhead", "dickheads",
-            "whore", "whores", "slut", "sluts", "bastard", "bastards", 
+            "whore", "whores", "slut", "sluts", "bastard", "bastards",
             "piss", "pissed", "pissing", "damn", "damned"
         )
         
@@ -30,41 +30,40 @@ class ProfanityFilter {
         private val STRICT_WORDS = MODERATE_WORDS + setOf(
             "god", "gods", "hell", "hells", "goddamn", "goddam", "goddammit", "god damn", "god dammit",
             "oh my god", "omg", "jesus", "christ", "lord", "jesus christ", "holy shit",
-            "holy crap", "bloody", "bugger", "bollocks", "crap", "craps", "fag", "faggot",
-            "retard", "retards", "gay", "homo", "queer", "lesbian", "tranny", "nigga", 
+            "fag", "fagot", "faggot",
+            "retard", "retards", "gay", "homo", "queer", "lesbian", "tranny", "nigga",
             "nigger", "son of a bitch", "spic", "chink", "wetback"
         )
         
         private val REPLACEMENT_MAP = mapOf(
             // MILD level replacements
-            "fuck" to "frick", "fucking" to "freaking", "fucked" to "messed up", "fucker" to "jerk", 
-            "fuckers" to "jerks", "fucks" to "messes up", "fuckin'" to "freakin'",
+            "fuck" to "frick", "fucking" to "freaking", "fucked" to "messed up", "fucker" to "jerk",
+            "fuckers" to "jerks", "fucks" to "messes up", "fuckin'" to "freakin'", "fuckin'" to "freakin'",
             "motherfuck" to "jerk", "motherfucker" to "jerk", "motherfuckers" to "jerks", "motherfucking" to "freaking",
-            "bitch" to "jerk", "bitches" to "jerks", "bitching" to "complaining", "bitchin'" to "complainin'",
+            "bitch" to "jerk", "bitches" to "jerks", "bitching" to "complaining", "bitchin'" to "complainin'", "bitchin'" to "complainin'",
             "ass" to "butt", "asses" to "butts", "asshole" to "jerk", "assholes" to "jerks",
             "arse" to "butt", "arses" to "butts", "arsehole" to "jerk", "arseholes" to "jerks",
             
             // MODERATE level replacements
-            "shit" to "shoot", "shits" to "shoots", "shitting" to "shooting", "shitter" to "shooter", 
-            "shite" to "shoot", "shitty" to "awful", "shittier" to "worse", "bullshit" to "nonsense",
-            "cunt" to "person", "cunts" to "people", "pussy" to "cat", "pussies" to "cats", 
+            "shit" to "shoot", "shits" to "shoots", "shitting" to "shooting", "shitter" to "shooter",
+            "shite" to "shoot", "shitty" to "awful", "shittier" to "worse", "bullshit" to "nonsense", "dipshit" to "silly person", "dipshits" to "silly people",
+            "cunt" to "person", "cunts" to "people", "pussy" to "cat", "pussies" to "cats",
             "cock" to "rooster", "cocks" to "roosters", "cocksucker" to "jerk", "cocksuckers" to "jerks",
-            "dick" to "jerk", "dicks" to "jerks", "dickhead" to "jerk", "dickheads" to "jerks", 
-            "whore" to "mean person", "whores" to "mean people", "slut" to "mean person", "sluts" to "mean people", 
+            "dick" to "jerk", "dicks" to "jerks", "dickhead" to "jerk", "dickheads" to "jerks",
+            "whore" to "mean person", "whores" to "mean people", "slut" to "mean person", "sluts" to "mean people",
             "bastard" to "jerk", "bastards" to "jerks",
-            "piss" to "ticked", "pissed" to "ticked off", "pissing" to "getting ticked", 
+            "piss" to "ticked", "pissed" to "ticked off", "pissing" to "getting ticked",
             "damn" to "darn", "damned" to "darned",
             
             // STRICT level replacements
-            "god" to "gosh", "gods" to "goshes", "hell" to "heck", "hells" to "hecks", 
-            "goddamn" to "gosh darn", "goddam" to "gosh darn", "goddammit" to "gosh darnit", 
-            "god damn" to "gosh darn", "god dammit" to "gosh darnit", "oh my god" to "oh my gosh", 
+            "god" to "gosh", "gods" to "goshes", "hell" to "heck", "hells" to "hecks",
+            "goddamn" to "gosh darn", "goddam" to "gosh darn", "goddammit" to "gosh darnit",
+            "god damn" to "gosh darn", "god dammit" to "gosh darnit", "oh my god" to "oh my gosh",
             "omg" to "omg", "jesus" to "jeepers", "christ" to "crikey", "lord" to "goodness",
-            "jesus christ" to "jeepers crikey", "holy shit" to "holy shoot", "holy crap" to "holy cow", 
-            "bloody" to "very", "bugger" to "bother", "bollocks" to "nonsense", 
-            "crap" to "crud", "craps" to "cruds", "fag" to "person", "faggot" to "person",
-            "retard" to "silly person", "retards" to "silly people", "gay" to "happy", 
-            "homo" to "person", "queer" to "strange", "lesbian" to "person", "tranny" to "person", 
+            "jesus christ" to "jeepers crikey", "holy shit" to "holy shoot",
+            "fag" to "person", "fagot" to "person", "faggot" to "person",
+            "retard" to "silly person", "retards" to "silly people", "gay" to "happy",
+            "homo" to "person", "queer" to "strange", "lesbian" to "person", "tranny" to "person",
             "nigga" to "person", "nigger" to "person", "son of a bitch" to "mean person",
             "spic" to "person", "chink" to "person", "wetback" to "person"
         )

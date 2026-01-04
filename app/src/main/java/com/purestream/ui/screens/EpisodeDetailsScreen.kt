@@ -1,6 +1,8 @@
 package com.purestream.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -9,7 +11,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -17,7 +25,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
 import androidx.compose.ui.focus.FocusRequester
@@ -54,15 +66,27 @@ fun EpisodeDetailsScreen(
     val isMobile = rememberIsMobile()
     val playButtonFocusRequester = remember { FocusRequester() }
     var showDemoModeDialog by remember { mutableStateOf(false) }
+    
+    // Animation state
+    var contentVisible by remember { mutableStateOf(false) }
+    val contentAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "content_alpha"
+    )
+    val contentScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0.95f,
+        animationSpec = androidx.compose.animation.core.tween(800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "content_scale"
+    )
 
-    // Auto-focus Play button when screen loads
     LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
+        contentVisible = true
         try {
-            // Add small delay to ensure composables are laid out
             kotlinx.coroutines.delay(100)
             playButtonFocusRequester.requestFocus()
         } catch (e: Exception) {
-            // Silently fail if focus request fails
             android.util.Log.w("EpisodeDetailsScreen", "Focus request failed: ${e.message}")
         }
     }
@@ -82,873 +106,590 @@ fun EpisodeDetailsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Transparent)
+            .background(Color.Black)
     ) {
-        // Background Image with overlay (use show background for consistency)
+        // Background Image with overlay
         showBackgroundUrl?.let { backgroundUrl ->
             AsyncImage(
                 model = backgroundUrl,
-                contentDescription = episode.title,
-                modifier = Modifier.fillMaxSize(),
+                contentDescription = null,
+                modifier = if (isMobile) {
+                    Modifier.fillMaxSize()
+                } else {
+                    // TV: Positioned to right, faded edges
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            // Fade out left side (Transparent -> Black)
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0.0f to Color.Transparent,
+                                    0.2f to Color.Transparent,
+                                    0.6f to Color.Black
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                            // Fade out bottom (Black -> Transparent)
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0.0f to Color.Black,
+                                    0.6f to Color.Black,
+                                    1.0f to Color.Transparent
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                        }
+                },
                 contentScale = ContentScale.Crop,
-                alpha = if (isMobile) 0.15f else 0.3f
+                alpha = if (isMobile) 0.4f else 0.6f
             )
         }
         
-        // Additional mobile background dimming for better visibility
-        if (isMobile) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.6f))
-            )
-        }
+        // Deep Overlays
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    if (isMobile) {
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF0F172A).copy(alpha = 0.4f),
+                                Color.Black.copy(alpha = 0.8f),
+                                Color.Black
+                            )
+                        )
+                    } else {
+                        // TV: Horizontal gradient to darken left side for text readability
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color.Black.copy(alpha = 0.95f),
+                                Color.Black.copy(alpha = 0.7f),
+                                Color.Transparent
+                            ),
+                            startX = 0f,
+                            endX = 1500f
+                        )
+                    }
+                )
+        )
+
+        // Pulsating Glow
+        val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "glow")
+        val glowAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.1f,
+            targetValue = 0.25f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(5000),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+            ),
+            label = "glow_alpha"
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF8B5CF6).copy(alpha = glowAlpha), Color.Transparent),
+                        radius = 1200f
+                    )
+                )
+        )
         
-        // Content Layout - Responsive
-        if (isMobile) {
-            // Mobile: Vertical layout with scrolling
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp)
-            ) {
-                // Episode Thumbnail (Top - Mobile) with top padding
-                Box(
+        // Main Content Area
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = contentAlpha
+                    scaleX = contentScale
+                    scaleY = contentScale
+                }
+        ) {
+            if (isMobile) {
+                Column(
                     modifier = Modifier
-                        .width(320.dp)
-                        .height(180.dp) // 16:9 aspect ratio for episodes
-                        .align(Alignment.CenterHorizontally)
-                        .padding(top = 32.dp)
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
                 ) {
-                    Card(
-                        modifier = Modifier.fillMaxSize(),
-                        shape = RoundedCornerShape(12.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    // Hero Section
+                    Box(modifier = Modifier.fillMaxWidth().height(350.dp)) {
+                         // Image with Fade
+                         AsyncImage(
+                             model = episode.thumbUrl,
+                             contentDescription = null,
+                             modifier = Modifier
+                                 .fillMaxSize()
+                                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                                 .drawWithContent {
+                                     drawContent()
+                                     drawRect(
+                                         brush = Brush.verticalGradient(
+                                             0.0f to Color.Black,
+                                             0.6f to Color.Black,
+                                             1.0f to Color.Transparent
+                                         ),
+                                         blendMode = BlendMode.DstIn
+                                     )
+                                 },
+                             contentScale = ContentScale.Crop
+                         )
+                         
+                         // Gradient Overlay
+                         Box(
+                             modifier = Modifier.fillMaxSize()
+                                 .background(Brush.verticalGradient(
+                                     colors = listOf(Color.Black.copy(alpha=0.3f), Color.Transparent, Color.Transparent, Color.Transparent)
+                                 ))
+                         )
+                         
+                         // Bottom Overlay Content
+                         Column(
+                             modifier = Modifier.fillMaxSize().padding(24.dp),
+                             verticalArrangement = Arrangement.Bottom
+                         ) {
+                             Text(episode.title, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White, lineHeight = 34.sp)
+                             Spacer(Modifier.height(8.dp))
+                             val episodeText = if (episode.seasonNumber == 0) "Specials:E${episode.episodeNumber}" else "S${episode.seasonNumber} E${episode.episodeNumber}"
+                             Text("$episodeText  •  ${formatDuration(episode.duration ?: 0)}", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                         }
+                    }
+                    
+                    // Details Section
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Brush.verticalGradient(0.0f to Color.Transparent, 0.4f to Color.Transparent))
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            episode.thumbUrl?.let { thumbUrl ->
-                                AsyncImage(
-                                    model = thumbUrl,
-                                    contentDescription = "${episode.title} Thumbnail",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } ?: Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF374151)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.Movie,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = Color(0xFF6B7280)
+                        // Progress Bar
+                        progressPercentage?.let { progress ->
+                            if (progress > 0f && progress < 0.90f) {
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                                    color = Color.White,
+                                    trackColor = Color.White.copy(alpha = 0.2f)
                                 )
                             }
+                        }
 
-                            // Progress bar at bottom (hide when 90%+ complete)
-                            progressPercentage?.let { progress ->
-                                if (progress < 0.90f) {
-                                    LinearProgressIndicator(
-                                        progress = { progress },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .align(Alignment.BottomCenter),
-                                        color = Color(0xFFF5B800),
-                                        trackColor = Color(0xFF374151)
+                        // Buttons
+                        val isResume = progressPercentage != null && progressPercentage > 0f && progressPercentage < 0.9f
+                         Button(
+                            onClick = { onPlayClick(if (isResume) progressPosition ?: 0L else 0L) },
+                            modifier = Modifier.fillMaxWidth().height(56.dp).focusRequester(playButtonFocusRequester),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (isResume) "RESUME" else "WATCH", fontWeight = FontWeight.Black, letterSpacing = 1.sp, color = Color.White)
+                        }
+                        
+                        if (isResume) {
+                             OutlinedButton(
+                                onClick = { onPlayClick(0L) },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                            ) {
+                                Icon(Icons.Default.Refresh, "Restart", tint = Color.White)
+                                Spacer(Modifier.width(8.dp))
+                                Text("RESTART FROM BEGINNING", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Text(episode.summary ?: "", color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, lineHeight = 24.sp)
+                        
+                        // Analysis Section (Glass Panel Tile)
+                        val (lvl, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                        if (isPremium || isDemoMode || lvl >= 10) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp)
+                                    .background(Color(0xFF1A1C2E).copy(alpha = 0.7f), RoundedCornerShape(24.dp))
+                                    .border(
+                                        1.dp,
+                                        Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.2f), Color.Transparent)),
+                                        RoundedCornerShape(24.dp)
                                     )
+                                    .padding(24.dp),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Psychology, null, tint = Color(0xFF8B5CF6))
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        "CONTENT ANALYSIS",
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 1.5.sp,
+                                        color = Color.White
+                                    )
+                                }
+
+                                if (canAnalyzeProfanity) {
+                                    Button(
+                                        onClick = { onAnalyzeProfanityClick?.invoke(episode) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        enabled = !isAnalyzingSubtitles,
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        if (isAnalyzingSubtitles) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White)
+                                        else Text("ANALYZE NOW", color = Color.White)
+                                    }
+                                }
+
+                                subtitleAnalysisResult?.let {
+                                    SubtitleAnalysisCard(it, currentProfile?.profanityFilterLevel ?: ProfanityFilterLevel.MODERATE)
                                 }
                             }
                         }
                     }
                 }
-                
-                // Episode Details (Below Thumbnail - Mobile)
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+            } else {
+                // TV Layout
+                var isAnalysisExpanded by remember { mutableStateOf(false) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = contentAlpha
+                            scaleX = contentScale
+                            scaleY = contentScale
+                        }
                 ) {
-                    // Episode Title
-                    Text(
-                        text = episode.title,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
-                    
-                    // Show Title and Episode Info
-                    Text(
-                        text = "$tvShowTitle - Season ${episode.seasonNumber}, Episode ${episode.episodeNumber}",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFFB3B3B3),
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
-                    
-                    // Episode Info Row with Technical Details
                     Row(
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(48.dp),
+                        horizontalArrangement = Arrangement.Start,
+                        verticalAlignment = Alignment.Top
                     ) {
-                        episode.year?.let { year ->
-                            Text(
-                                text = year.toString(),
-                                fontSize = 14.sp,
-                                color = Color(0xFFB3B3B3)
-                            )
-                        }
-                        
-                        episode.duration?.let { duration ->
-                            Text(
-                                text = formatDuration(duration),
-                                fontSize = 14.sp,
-                                color = Color(0xFFB3B3B3)
-                            )
-                        }
-                        
-                        episode.rating?.let { rating ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFBBF24),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = String.format("%.1f", rating),
-                                    fontSize = 14.sp,
-                                    color = Color(0xFFB3B3B3)
-                                )
-                            }
-                        }
-                        
-                        // Protection Status Padlock
-                        val isAnalyzed = !canAnalyzeProfanity
-                        Box(
+                        // Left Column: Movie Details (Limited width to reveal background)
+                        Column(
                             modifier = Modifier
-                                .background(
-                                    color = if (isAnalyzed) Color(0xFF10B981).copy(alpha = 0.8f) else Color(0xFFEF4444).copy(alpha = 0.8f),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .padding(8.dp)
+                                .fillMaxWidth(0.55f)
+                                .padding(top = 40.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            Icon(
-                                if (isAnalyzed) Icons.Default.Lock else Icons.Default.LockOpen,
-                                contentDescription = if (isAnalyzed) "Content Analyzed" else "Content Not Analyzed",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
+                            // Episode Title
+                            Text(
+                                text = episode.title,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.White,
+                                lineHeight = 32.sp
                             )
-                        }
-                    }
-                    
-                    // Episode Summary
-                    episode.summary?.let { summary ->
-                        Text(
-                            text = summary,
-                            fontSize = 14.sp,
-                            color = Color(0xFFE0E0E0),
-                            lineHeight = 20.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    
-                    // Action Buttons (mobile) - Column layout with Analyze Profanity below
-                    Column(
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        // First Row: Play/Resume + Restart buttons
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // Show Resume + Restart when there's progress (but not complete), otherwise show Play
-                            if (progressPercentage != null && progressPercentage > 0f && progressPercentage < 0.90f) {
-                                // Resume Button
-                                val resumeButtonInteractionSource = remember { MutableInteractionSource() }
-                                val resumeButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                                    interactionSource = resumeButtonInteractionSource,
-                                    defaultColor = Color(0xFFF5B800)
+                            
+                            // Show Info
+                            val seasonEpisodeText = if (episode.seasonNumber == 0) "Specials:E${episode.episodeNumber}" else "S${episode.seasonNumber}:E${episode.episodeNumber}"
+                             Text(
+                                text = "$tvShowTitle  •  $seasonEpisodeText",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            // Meta Row (Smaller fonts)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "${episode.year}  •  ${formatDuration(episode.duration ?: 0)}",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
                                 )
 
-                                Button(
-                                    onClick = {
-                                        if (isDemoMode) {
-                                            showDemoModeDialog = true
-                                        } else {
-                                            onPlayClick(progressPosition ?: 0L)
-                                        }
-                                    },
-                                    modifier = Modifier.height(48.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = resumeButtonBackgroundColor,
-                                        contentColor = Color.Black
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
+                                // Rating
+                                episode.rating?.let {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Star, null, tint = Color(0xFFFBBF24), modifier = Modifier.size(14.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(String.format("%.1f", it), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+
+                                // Protection Status Badge (TV)
+                                val isAnalyzed = !canAnalyzeProfanity
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .background(
+                                            if (isAnalyzed) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Icon(
-                                        Icons.Default.PlayArrow,
-                                        contentDescription = "Resume",
-                                        modifier = Modifier.size(20.dp)
+                                        imageVector = if (isAnalyzed) Icons.Default.Lock else Icons.Default.LockOpen,
+                                        contentDescription = null,
+                                        tint = if (isAnalyzed) Color(0xFF10B981) else Color(0xFFEF4444),
+                                        modifier = Modifier.size(12.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(Modifier.width(4.dp))
                                     Text(
-                                        text = "Resume",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
+                                        text = if (isAnalyzed) "Protected" else "Unprotected",
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
                                     )
+                                }
+                            }
+
+                            // Summary with auto-scroll (3 lines max)
+                            episode.summary?.let { summary ->
+                                AutoScrollingText(
+                                    text = summary,
+                                    maxLines = 3,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFFE0E0E0),
+                                    lineHeight = 20.sp
+                                )
+                            }
+                            
+                            // Progress Text (if started)
+                            progressPercentage?.let { progress ->
+                                if (progress > 0f && progress < 0.90f) {
+                                    val totalDurationMs = episode.duration ?: 0L
+                                    val remainingMs = ((1f - progress) * totalDurationMs).toLong()
+                                    val remainingMinutes = (remainingMs / (1000 * 60)).toInt()
+
+                                    Text(
+                                        text = "${remainingMinutes}m left",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+
+                            // Actions (Buttons 50% smaller)
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                val isResume = progressPercentage != null && progressPercentage > 0f && progressPercentage < 0.9f
+
+                                // Play button
+                                val interactionSource = remember { MutableInteractionSource() }
+                                val isActuallyFocused by interactionSource.collectIsFocusedAsState()
+
+                                Surface(
+                                    onClick = { onPlayClick(if (isResume) progressPosition ?: 0L else 0L) },
+                                    modifier = Modifier
+                                        .height(28.dp)
+                                        .focusRequester(playButtonFocusRequester)
+                                        .focusable(interactionSource = interactionSource),
+                                    color = if (isActuallyFocused) Color.White else Color(0xFF8B5CF6),
+                                    contentColor = if (isActuallyFocused) Color.Black else Color.White,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(14.dp))
+                                        Text(
+                                            text = if (isResume) "RESUME" else "PLAY",
+                                            fontWeight = FontWeight.Black,
+                                            letterSpacing = 0.5.sp,
+                                            fontSize = 10.sp
+                                        )
+                                    }
                                 }
 
                                 // Restart Button
-                                val restartButtonInteractionSource = remember { MutableInteractionSource() }
-                                val restartButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                                    interactionSource = restartButtonInteractionSource,
-                                    defaultColor = Color(0xFF9CA3AF)
-                                )
+                                if (isResume) {
+                                    val restartInteractionSource = remember { MutableInteractionSource() }
+                                    val isRestartFocused by restartInteractionSource.collectIsFocusedAsState()
 
-                                IconButton(
-                                    onClick = {
-                                        if (isDemoMode) {
-                                            showDemoModeDialog = true
-                                        } else {
-                                            onPlayClick(0L)
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .background(
-                                            color = restartButtonBackgroundColor,
-                                            shape = RoundedCornerShape(8.dp)
-                                        )
-                                ) {
-                                    Icon(
-                                        Icons.Default.Refresh,
-                                        contentDescription = "Restart",
-                                        modifier = Modifier.size(24.dp),
-                                        tint = Color.White
-                                    )
-                                }
-                            } else {
-                                // Play Button (no progress)
-                                val playButtonInteractionSource = remember { MutableInteractionSource() }
-                                val playButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                                    interactionSource = playButtonInteractionSource,
-                                    defaultColor = Color(0xFFF5B800)
-                                )
-
-                                Button(
-                                    onClick = {
-                                        if (isDemoMode) {
-                                            showDemoModeDialog = true
-                                        } else {
-                                            onPlayClick(0L)
-                                        }
-                                    },
-                                    modifier = Modifier.height(48.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = playButtonBackgroundColor,
-                                        contentColor = Color.Black
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.PlayArrow,
-                                        contentDescription = "Play",
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Play",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        // Second Row: Analyze Profanity Button - Pro or Level 10+ feature, full width
-                        val (analyzeButtonLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
-                        val canUseAnalyzeButton = isPremium || analyzeButtonLevel >= 10
-
-                        if (canUseAnalyzeButton) {
-                            onAnalyzeProfanityClick?.let { callback ->
-                                val buttonEnabled = canAnalyzeProfanity && !isAnalyzingSubtitles
-                                val buttonText = when {
-                                    isAnalyzingSubtitles -> "Analyzing..."
-                                    !canAnalyzeProfanity -> "Analysis Complete"
-                                    else -> "Analyze Profanity"
-                                }
-
-                                val isComplete = !canAnalyzeProfanity
-                                val buttonColor = when {
-                                    isComplete -> Color(0xFF10B981) // Green for completed
-                                    buttonEnabled -> Color.White
-                                    else -> Color(0xFF6B7280)
-                                }
-
-                                OutlinedButton(
-                                    onClick = { callback(episode) },
-                                    modifier = Modifier
-                                        .height(48.dp),
-                                    enabled = buttonEnabled,
-                                    colors = ButtonDefaults.outlinedButtonColors(
-                                        contentColor = buttonColor
-                                    ),
-                                    border = androidx.compose.foundation.BorderStroke(
-                                        1.dp,
-                                        buttonColor
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    if (isAnalyzingSubtitles) {
-                                        androidx.compose.material3.CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = Color.White
-                                        )
-                                    } else {
-                                        Icon(
-                                            if (canAnalyzeProfanity) Icons.Default.Psychology
-                                            else Icons.Default.CheckCircle,
-                                            contentDescription = buttonText,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = buttonColor
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = buttonText,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = buttonColor
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Subtitle Analysis Results (mobile) - Pro or Level 10+ feature
-                    val (currentLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
-                    val canViewAnalysis = isPremium || currentLevel >= 10
-
-                    if (canViewAnalysis) {
-                        subtitleAnalysisResult?.let { result ->
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            SubtitleAnalysisCard(
-                                analysisResult = result,
-                                currentFilterLevel = currentProfile?.profanityFilterLevel ?: ProfanityFilterLevel.MODERATE
-                            )
-                        }
-                    }
-                    }
-                    
-                    // Profanity Level Indicator (only show if not UNKNOWN)
-                    val profanityLevel = episode.profanityLevel ?: ProfanityLevel.UNKNOWN
-                    if (profanityLevel != ProfanityLevel.UNKNOWN) {
-                        ProfanityLevelCard(profanityLevel = profanityLevel)
-                    }
-                    
-                    // Subtitle Analysis Error (mobile)
-                    subtitleAnalysisError?.let { error ->
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFFEF4444).copy(alpha = 0.2f)
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Error,
-                                    contentDescription = null,
-                                    tint = Color(0xFFEF4444),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Analysis Failed",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = error,
-                                        fontSize = 14.sp,
-                                        color = Color(0xFFE0E0E0)
-                                    )
-                                }
-                                
-                                IconButton(
-                                    onClick = onClearAnalysisError,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Dismiss",
-                                        tint = Color(0xFFEF4444),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // TV: Horizontal layout (existing)
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(48.dp),
-                horizontalArrangement = Arrangement.spacedBy(40.dp)
-            ) {
-                // Left Column: Thumbnail and Analysis Results
-                Column(
-                    modifier = Modifier.width(400.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp)
-                ) {
-                    // Episode Thumbnail (Top Left) - 16:9 aspect ratio for episodes
-                    Box(
-                        modifier = Modifier
-                            .width(400.dp)
-                            .height(225.dp) // 16:9 aspect ratio (400/225 = 1.78)
-                    ) {
-                        Card(
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(12.dp),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                        ) {
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                episode.thumbUrl?.let { thumbUrl ->
-                                    AsyncImage(
-                                        model = thumbUrl,
-                                        contentDescription = "${episode.title} Thumbnail",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } ?: Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(Color(0xFF374151)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        Icons.Default.Movie,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(64.dp),
-                                        tint = Color(0xFF6B7280)
-                                    )
-                                }
-
-                                // Progress bar at bottom
-                                progressPercentage?.let { progress ->
-                                    LinearProgressIndicator(
-                                        progress = { progress },
+                                    Surface(
+                                        onClick = { onPlayClick(0L) },
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .align(Alignment.BottomCenter),
-                                        color = Color(0xFFF5B800),
-                                        trackColor = Color(0xFF374151)
-                                    )
+                                            .size(28.dp)
+                                            .focusable(interactionSource = restartInteractionSource),
+                                        color = if (isRestartFocused) Color.White else Color.White.copy(alpha = 0.1f),
+                                        contentColor = if (isRestartFocused) Color.Black else Color.White,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = if (!isRestartFocused) BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)) else null
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Refresh, "Restart", modifier = Modifier.size(14.dp))
+                                        }
+                                    }
+                                }
+
+                                // Analysis Toggle Button
+                                val (lvl, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
+                                if (isPremium || isDemoMode || lvl >= 10) {
+                                    
+                                    val analysisInteractionSource = remember { MutableInteractionSource() }
+                                    val isAnalysisFocused by analysisInteractionSource.collectIsFocusedAsState()
+
+                                    Surface(
+                                        onClick = {
+                                            if (canAnalyzeProfanity && subtitleAnalysisResult == null && !isAnalyzingSubtitles) {
+                                                onAnalyzeProfanityClick?.invoke(episode)
+                                            }
+                                            isAnalysisExpanded = !isAnalysisExpanded
+                                        },
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .focusable(interactionSource = analysisInteractionSource),
+                                        color = if (isAnalysisExpanded) Color(0xFF8B5CF6) 
+                                               else if (isAnalysisFocused) Color.White 
+                                               else Color.White.copy(alpha = 0.1f),
+                                        contentColor = if (isAnalysisExpanded) Color.White 
+                                                       else if (isAnalysisFocused) Color.Black 
+                                                       else Color.White,
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = if (!isAnalysisExpanded && !isAnalysisFocused) BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)) else null
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            if (isAnalyzingSubtitles) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(12.dp),
+                                                    color = if (isAnalysisFocused) Color.Black else Color.White,
+                                                    strokeWidth = 2.dp
+                                                )
+                                            } else {
+                                                Icon(Icons.Default.Psychology, "Content Analysis", modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Expanded Analysis Tile
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = isAnalysisExpanded,
+                                        enter = androidx.compose.animation.expandHorizontally(expandFrom = Alignment.Start) + androidx.compose.animation.fadeIn(),
+                                        exit = androidx.compose.animation.shrinkHorizontally(shrinkTowards = Alignment.Start) + androidx.compose.animation.fadeOut()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(480.dp)
+                                                .background(Color(0xFF1A1C2E).copy(alpha = 0.95f), RoundedCornerShape(16.dp))
+                                                .border(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                                                .padding(16.dp)
+                                        ) {
+                                            Column(
+                                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(Icons.Default.Psychology, null, tint = Color(0xFF8B5CF6), modifier = Modifier.size(20.dp))
+                                                        Spacer(Modifier.width(8.dp))
+                                                        Text(
+                                                            "CONTENT ANALYSIS",
+                                                            fontWeight = FontWeight.Black,
+                                                            letterSpacing = 1.sp,
+                                                            fontSize = 12.sp,
+                                                            color = Color.White
+                                                        )
+                                                    }
+                                                    if (isAnalyzingSubtitles) {
+                                                        CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                                                    }
+                                                }
+
+                                                subtitleAnalysisResult?.let {
+                                                    SubtitleAnalysisCard(it, currentProfile?.profanityFilterLevel ?: ProfanityFilterLevel.MODERATE)
+                                                } ?: run {
+                                                    if (!isAnalyzingSubtitles) {
+                                                        Text("Click to start analysis", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
+                                                    } else {
+                                                        Text("Analyzing...", fontSize = 12.sp, color = Color.White.copy(alpha = 0.5f))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
-                    
-                    // Analysis Results (directly below thumbnail) - Pro or Level 10+ feature
-                    val (tvCurrentLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
-                    val tvCanViewAnalysis = isPremium || tvCurrentLevel >= 10
-
-                    if (tvCanViewAnalysis) {
-                        subtitleAnalysisResult?.let { result ->
-                        SubtitleAnalysisCard(
-                            analysisResult = result,
-                            currentFilterLevel = currentProfile?.profanityFilterLevel ?: ProfanityFilterLevel.MODERATE
-                        )
-                    }
-                    }
-                    
-                    // Analysis Error (directly below thumbnail)
-                    subtitleAnalysisError?.let { error ->
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFFEF4444).copy(alpha = 0.2f)
-                            ),
-                            shape = RoundedCornerShape(8.dp)
+                        
+                        // Right Side: Episode Thumbnail (Glassy Card) - Positioned at Top Right
+                        Column(
+                             modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .padding(start = 48.dp),
+                             horizontalAlignment = Alignment.End,
+                             verticalArrangement = Arrangement.Top
                         ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Error,
-                                    contentDescription = null,
-                                    tint = Color(0xFFEF4444),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Analysis Failed",
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = error,
-                                        fontSize = 14.sp,
-                                        color = Color(0xFFE0E0E0)
-                                    )
-                                }
-                                
-                                IconButton(
-                                    onClick = onClearAnalysisError,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Dismiss",
-                                        tint = Color(0xFFEF4444),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
+                             Box(modifier = Modifier.width(400.dp)) {
+                                 EpisodeHeaderSection(episode, tvShowTitle, progressPercentage, false)
+                             }
                         }
                     }
-                }
-                
-                // Right Column: Controls, Episode Details, and Action Buttons
-                Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .weight(1f),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
-            ) {
-                // Back Button (to the right of thumbnail)
-                IconButton(
-                    onClick = onBackClick,
-                    modifier = Modifier
-                        .background(
-                            color = Color(0x80000000),
-                            shape = androidx.compose.foundation.shape.CircleShape
-                        )
-                        .size(36.dp)
-                ) {
-                    Icon(
-                        Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
-                }
-                
-                // Episode Details (directly beneath back button)
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                
-                // Episode Title
-                Text(
-                    text = episode.title,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-                
-                // Show Title and Episode Info
-                Text(
-                    text = "$tvShowTitle - Season ${episode.seasonNumber}, Episode ${episode.episodeNumber}",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFFB3B3B3)
-                )
-                
-                // Episode Info Row with Technical Details
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    episode.year?.let { year ->
-                        Text(
-                            text = year.toString(),
-                            fontSize = 14.sp,
-                            color = Color(0xFFB3B3B3)
-                        )
-                    }
-                    
-                    episode.duration?.let { duration ->
-                        Text(
-                            text = formatDuration(duration),
-                            fontSize = 14.sp,
-                            color = Color(0xFFB3B3B3)
-                        )
-                    }
-                    
-                    episode.rating?.let { rating ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Star,
-                                contentDescription = null,
-                                tint = Color(0xFFFBBF24),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = String.format("%.1f", rating),
-                                fontSize = 14.sp,
-                                color = Color(0xFFB3B3B3)
-                            )
-                        }
-                    }
-                    
-                    // Protection Status Padlock (matching MediaPlayer design)
-                    val isAnalyzed = !canAnalyzeProfanity // Analysis complete means not canAnalyze
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = if (isAnalyzed) Color(0xFF10B981).copy(alpha = 0.8f) else Color(0xFFEF4444).copy(alpha = 0.8f),
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .padding(8.dp)
-                    ) {
-                        Icon(
-                            if (isAnalyzed) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (isAnalyzed) "Content Analyzed" else "Content Not Analyzed",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-                
-                // Episode Summary with auto-scroll
-                episode.summary?.let { summary ->
-                    AutoScrollingText(
-                        text = summary,
-                        maxLines = 4,
-                        fontSize = 14.sp,
-                        color = Color(0xFFE0E0E0),
-                        lineHeight = 20.sp
-                    )
-                }
-                
-                // Action Buttons (moved directly beneath episode summary)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Show Resume + Restart when there's progress, otherwise show Play
-                    if (progressPercentage != null && progressPercentage > 0f) {
-                        // Resume Button
-                        var isResumeFocused by remember { mutableStateOf(false) }
-                        val resumeButtonInteractionSource = remember { MutableInteractionSource() }
-                        val resumeButtonBackgroundColor = if (isResumeFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
-                        val resumeButtonContentColor = if (isResumeFocused) Color.Black else Color.White
-
-                        Button(
-                            onClick = {
-                                if (isDemoMode) {
-                                    showDemoModeDialog = true
-                                } else {
-                                    onPlayClick(progressPosition ?: 0L)
-                                }
-                            },
-                            modifier = Modifier
-                                .height(48.dp)
-                                .focusRequester(playButtonFocusRequester)
-                                .onFocusChanged { isResumeFocused = it.isFocused }
-                                .hoverable(resumeButtonInteractionSource)
-                                .focusable(interactionSource = resumeButtonInteractionSource),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = resumeButtonBackgroundColor,
-                                contentColor = resumeButtonContentColor
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Resume",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Resume",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        // Restart Button
-                        var isRestartFocused by remember { mutableStateOf(false) }
-                        val restartButtonInteractionSource = remember { MutableInteractionSource() }
-                        val restartButtonBackgroundColor = if (isRestartFocused) Color.White else Color(0xFF9CA3AF)
-                        val restartButtonIconColor = if (isRestartFocused) Color.Black else Color.White
-
-                        IconButton(
-                            onClick = {
-                                if (isDemoMode) {
-                                    showDemoModeDialog = true
-                                } else {
-                                    onPlayClick(0L)
-                                }
-                            },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .onFocusChanged { isRestartFocused = it.isFocused }
-                                .background(
-                                    color = restartButtonBackgroundColor,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .hoverable(restartButtonInteractionSource)
-                                .focusable(interactionSource = restartButtonInteractionSource)
-                        ) {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Restart",
-                                modifier = Modifier.size(24.dp),
-                                tint = restartButtonIconColor
-                            )
-                        }
-                    } else {
-                        // Play Button (no progress)
-                        var isPlayFocused by remember { mutableStateOf(false) }
-                        val playButtonInteractionSource = remember { MutableInteractionSource() }
-                        val playButtonBackgroundColor = if (isPlayFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
-                        val playButtonContentColor = if (isPlayFocused) Color.Black else Color.White
-
-                        Button(
-                            onClick = {
-                                if (isDemoMode) {
-                                    showDemoModeDialog = true
-                                } else {
-                                    onPlayClick(0L)
-                                }
-                            },
-                            modifier = Modifier
-                                .height(48.dp)
-                                .focusRequester(playButtonFocusRequester)
-                                .onFocusChanged { isPlayFocused = it.isFocused }
-                                .hoverable(playButtonInteractionSource)
-                                .focusable(interactionSource = playButtonInteractionSource),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = playButtonBackgroundColor,
-                                contentColor = playButtonContentColor
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Play",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // Analyze Profanity Button - Pro or Level 10+ feature
-                    val (tvAnalyzeButtonLevel, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
-                    val tvCanUseAnalyzeButton = isPremium || tvAnalyzeButtonLevel >= 10
-
-                    if (tvCanUseAnalyzeButton) {
-                        onAnalyzeProfanityClick?.let { callback ->
-                        var isAnalyzeFocused by remember { mutableStateOf(false) }
-                        val buttonEnabled = canAnalyzeProfanity && !isAnalyzingSubtitles
-                        val buttonText = when {
-                            isAnalyzingSubtitles -> "Analyzing..."
-                            !canAnalyzeProfanity -> "Analysis Complete"
-                            else -> "Analyze Profanity"
-                        }
-
-                        val isComplete = !canAnalyzeProfanity
-                        val buttonColor = when {
-                            isAnalyzeFocused -> Color.Black // Black text when focused
-                            isComplete -> Color(0xFF10B981) // Green for completed
-                            buttonEnabled -> Color.White
-                            else -> Color(0xFF6B7280)
-                        }
-
-                        val buttonBackgroundColor = if (isAnalyzeFocused) Color.White else Color.Transparent
-                        val buttonBorderColor = if (isAnalyzeFocused) Color.White else buttonColor
-
-                        OutlinedButton(
-                            onClick = { callback(episode) },
-                            modifier = Modifier
-                                .height(48.dp)
-                                .onFocusChanged { isAnalyzeFocused = it.isFocused },
-                            enabled = buttonEnabled,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = buttonColor,
-                                containerColor = buttonBackgroundColor
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                buttonBorderColor
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            if (isAnalyzingSubtitles) {
-                                androidx.compose.material3.CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = Color.White
-                                )
-                            } else {
-                                Icon(
-                                    if (canAnalyzeProfanity) Icons.Default.Psychology 
-                                    else Icons.Default.CheckCircle,
-                                    contentDescription = buttonText,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = buttonColor
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = buttonText,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = buttonColor
-                            )
-                        }
-                    }
-                    }
-                }
-                
-                // Profanity Level Indicator (only show if not UNKNOWN)
-                val profanityLevel = episode.profanityLevel ?: ProfanityLevel.UNKNOWN
-                if (profanityLevel != ProfanityLevel.UNKNOWN) {
-                    ProfanityLevelCard(profanityLevel = profanityLevel)
-                }
                 }
             }
         }
-        }
 
-        // Show demo mode dialog when playback is blocked
         if (showDemoModeDialog) {
-            DemoModePlaybackBlockedDialog(
-                onDismiss = { showDemoModeDialog = false }
+            DemoModePlaybackBlockedDialog(onDismiss = { showDemoModeDialog = false })
+        }
+    }
+}
+
+@Composable
+private fun EpisodeHeaderSection(
+    episode: Episode,
+    tvShowTitle: String,
+    progressPercentage: Float?,
+    isMobile: Boolean
+) {
+    // Glass panel styling for thumbnail
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .background(Color(0xFF1A1C2E).copy(alpha = 0.5f), RoundedCornerShape(24.dp))
+            .border(
+                1.dp,
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.2f),
+                        Color.Transparent
+                    )
+                ),
+                RoundedCornerShape(24.dp)
             )
+            .clip(RoundedCornerShape(24.dp))
+    ) {
+        AsyncImage(
+            model = episode.thumbUrl,
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+
+        progressPercentage?.let { progress ->
+            if (progress < 0.90f) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth().height(6.dp).align(Alignment.BottomCenter),
+                    color = Color.White,
+                    trackColor = Color.Black.copy(alpha = 0.5f)
+                )
+            }
         }
     }
 }

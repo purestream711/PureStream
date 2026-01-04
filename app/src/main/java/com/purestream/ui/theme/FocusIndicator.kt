@@ -67,7 +67,7 @@ fun Modifier.tvCircularFocusIndicator(
  */
 @Composable
 fun Modifier.tvCardFocusIndicator(
-    focusScale: Float = 1.08f, // Slightly larger scale for cards
+    focusScale: Float = 1.04f, // Reduced from 1.08f for subtle increase
     animationDuration: Int = FocusIndicatorDefaults.DefaultAnimationDuration
 ): Modifier {
     return this.tvFocusIndicator(focusScale, animationDuration)

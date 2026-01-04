@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 
+import com.purestream.data.database.AppDatabase
+import com.purestream.data.repository.WatchProgressRepository
+
 class ProfileManager private constructor(context: Context) {
     
     companion object {
@@ -27,6 +30,16 @@ class ProfileManager private constructor(context: Context) {
     private val profileRepository = ProfileRepository(context)
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences("profile_prefs", Context.MODE_PRIVATE)
     
+    private val achievementManager by lazy {
+        val db = AppDatabase.getDatabase(context)
+        AchievementManager(
+            context,
+            profileRepository,
+            WatchProgressRepository(db, context),
+            db
+        )
+    }
+    
     private val _currentProfile = MutableStateFlow<Profile?>(null)
     val currentProfile: StateFlow<Profile?> = _currentProfile.asStateFlow()
     
@@ -36,6 +49,14 @@ class ProfileManager private constructor(context: Context) {
         sharedPreferences.edit()
             .putString("current_profile_id", profile.id)
             .apply()
+            
+        // Check for Clean Sweep achievement
+        try {
+            achievementManager.checkCleanSweep(profile)
+        } catch (e: Exception) {
+            // Ignore errors during achievement check
+            e.printStackTrace()
+        }
     }
     
     suspend fun loadCurrentProfile(): Profile? {

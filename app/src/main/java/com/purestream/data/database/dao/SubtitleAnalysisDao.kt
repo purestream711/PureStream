@@ -43,4 +43,7 @@ interface SubtitleAnalysisDao {
     
     @Query("SELECT COUNT(*) FROM subtitle_analysis")
     suspend fun getTotalAnalysisCount(): Int
+
+    @Query("SELECT contentTitle FROM subtitle_analysis WHERE contentType = 'movie' ORDER BY profanityWordsCount DESC LIMIT 1")
+    suspend fun getFilthiestMovieTitle(): String?
 }

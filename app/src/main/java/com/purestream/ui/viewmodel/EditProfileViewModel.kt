@@ -91,7 +91,9 @@ class EditProfileViewModel(
                 val result = plexRepository.getLibrariesWithAuth(token)
                 result.fold(
                     onSuccess = { libraries ->
-                        _uiState.value = _uiState.value.copy(availableLibraries = libraries)
+                        // Filter out "Artist" libraries (Music) as they are not supported/needed
+                        val filteredLibraries = libraries.filter { it.type.lowercase() != "artist" }
+                        _uiState.value = _uiState.value.copy(availableLibraries = filteredLibraries)
                     },
                     onFailure = { exception ->
                         _uiState.value = _uiState.value.copy(

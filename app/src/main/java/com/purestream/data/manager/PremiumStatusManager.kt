@@ -8,6 +8,7 @@ import com.purestream.data.repository.ProfileRepository
 import com.purestream.data.model.ProfanityFilterLevel
 import com.purestream.data.manager.ProfileManager
 import com.purestream.data.billing.PurchaseCompletionListener
+import com.purestream.data.database.AppDatabase
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +31,16 @@ class PremiumStatusManager private constructor(private val context: Context) : P
     private val appSettingsRepository = AppSettingsRepository(context)
     private val profileRepository = ProfileRepository(context)
     private var billingRepository: BillingRepository? = null
+
+    private val achievementManager by lazy {
+        val db = AppDatabase.getDatabase(context)
+        AchievementManager(
+            context,
+            profileRepository,
+            com.purestream.data.repository.WatchProgressRepository(db, context),
+            db
+        )
+    }
     
     // State management
     private val _premiumStatus = MutableStateFlow<PremiumStatusState>(PremiumStatusState.Unknown)
@@ -286,8 +297,17 @@ class PremiumStatusManager private constructor(private val context: Context) : P
      */
     private suspend fun updateLocalPremiumStatus(isPremium: Boolean) {
         try {
-            Log.d(tag, "Updating local premium status to: $isPremium")
+            val wasPremium = getLocalPremiumStatus()
+            Log.d(tag, "Updating local premium status to: $isPremium. Was previously premium: $wasPremium")
             appSettingsRepository.updatePremiumStatus(isPremium)
+
+            // If user just became premium, award achievement
+            if (isPremium && !wasPremium) {
+                Log.i(tag, "User has become a Power User! Awarding achievement to all profiles.")
+                profileRepository.getAllProfilesList().forEach { profile ->
+                    achievementManager.unlockAchievement(profile.id, com.purestream.data.model.Achievement.POWER_USER)
+                }
+            }
         } catch (e: Exception) {
             Log.e(tag, "Failed to update local premium status", e)
         }

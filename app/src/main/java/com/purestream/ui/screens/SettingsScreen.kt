@@ -17,12 +17,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.animation.core.animateFloatAsState
@@ -53,6 +55,7 @@ import com.purestream.utils.LevelCalculator
 import com.purestream.ui.components.LeftSidebar
 import com.purestream.ui.components.BottomNavigation
 import com.purestream.ui.components.LibraryDropdown
+import com.purestream.ui.components.AchievementRow
 import com.purestream.ui.theme.*
 import com.purestream.ui.theme.tvButtonFocus
 import com.purestream.data.manager.PremiumStatusManager
@@ -67,6 +70,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import com.purestream.utils.rememberIsMobile
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -108,6 +112,8 @@ fun SettingsScreen(
     onPreferredLibraryChange: () -> Unit = {},  // New callback for library changes
     onNavigateToLoading: () -> Unit = {},  // Navigate to loading screen for AI curation
     onProfileUpdated: (Profile) -> Unit = {},  // Callback when profile is updated
+    onNavigateToLevelUpStats: () -> Unit = {}, // Navigate to Level Up Stats screen
+    achievementsFocusRequester: FocusRequester = FocusRequester(),
     modifier: Modifier = Modifier
 ) {
     val isMobile = rememberIsMobile()
@@ -122,6 +128,40 @@ fun SettingsScreen(
     var celebrationOldLevel by remember { mutableIntStateOf(1) }
     var celebrationNewLevel by remember { mutableIntStateOf(2) }
     var celebrationTotalFiltered by remember { mutableIntStateOf(0) }
+
+    // Achievement celebration state
+    var showAchievementCelebration by remember { mutableStateOf(false) }
+    var celebrationQueue by remember { mutableStateOf<List<Achievement>>(emptyList()) }
+    
+    // Track previous achievements to detect unlocks
+    var previousAchievements by remember { mutableStateOf(currentProfile?.unlockedAchievements ?: emptyList()) }
+    
+    // Detect new achievements
+    LaunchedEffect(currentProfile?.unlockedAchievements) {
+        currentProfile?.let { profile ->
+            val newAchievements = profile.unlockedAchievements
+            
+            // Logic: It's in the new list, wasn't in the old list
+            val newlyUnlockedNames = newAchievements.filter { !previousAchievements.contains(it) }
+            
+            if (newlyUnlockedNames.isNotEmpty()) {
+                val newAchievementsList = newlyUnlockedNames.mapNotNull { name ->
+                    try {
+                        Achievement.valueOf(name)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+                
+                if (newAchievementsList.isNotEmpty()) {
+                    celebrationQueue = celebrationQueue + newAchievementsList
+                    showAchievementCelebration = true
+                }
+            }
+            
+            previousAchievements = newAchievements
+        }
+    }
 
     // Defensive premium status management - prevents crashes from cross-platform sync issues
     val premiumStatusManager = remember { PremiumStatusManager.getInstance(context) }
@@ -175,6 +215,15 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A), // Dark blue-gray top
+                        Color(0xFF0D0D0D), // Pure black middle
+                        Color(0xFF0D0D0D)  // Pure black bottom
+                    )
+                )
+            )
     ) {
 
         if (isMobile) {
@@ -224,6 +273,8 @@ fun SettingsScreen(
                     onCelebrationTotalFilteredChange = { celebrationTotalFiltered = it },
                     onShowCelebrationChange = { showCelebration = it },
                     isMobile = true,
+                    achievementsFocusRequester = null,
+                    onLevelClick = onNavigateToLevelUpStats,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -251,7 +302,7 @@ fun SettingsScreen(
                 // Left Sidebar - Fixed width with transparent background
                 Box(
                     modifier = Modifier
-                        .width(60.dp)
+                        .width(80.dp)
                         .fillMaxHeight()
                         .background(Color.Transparent)
                 ) {
@@ -289,7 +340,6 @@ fun SettingsScreen(
                     onAnnualUpgradeClick = onAnnualUpgradeClick,
                     onFreeVersionClick = onFreeVersionClick,
                     onPreferredLibraryChange = onPreferredLibraryChange,
-                    // Pass callbacks down to TabbedSettingsContent
                     onNavigateToLoading = onNavigateToLoading,
                     onProfileUpdated = onProfileUpdated,
                     isTogglingAiCuration = isTogglingAiCuration,
@@ -312,12 +362,13 @@ fun SettingsScreen(
                     onCelebrationTotalFilteredChange = { celebrationTotalFiltered = it },
                     onShowCelebrationChange = { showCelebration = it },
                     isMobile = false,
+                    achievementsFocusRequester = achievementsFocusRequester,
+                    onLevelClick = onNavigateToLevelUpStats,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
                         .background(Color.Transparent)
-                )
-            }
+                )            }
         }
 
         // Show loading overlay when toggling AI curation
@@ -354,6 +405,21 @@ fun SettingsScreen(
                 totalFilteredWords = celebrationTotalFiltered,
                 onDismiss = {
                     showCelebration = false
+                }
+            )
+        }
+
+        // Achievement celebration overlay
+        if (showAchievementCelebration && celebrationQueue.isNotEmpty()) {
+            AchievementUnlockCelebrationScreen(
+                achievement = celebrationQueue.first(),
+                onDismiss = {
+                    // Remove the shown achievement from queue
+                    celebrationQueue = celebrationQueue.drop(1)
+                    // If queue is empty, hide overlay
+                    if (celebrationQueue.isEmpty()) {
+                        showAchievementCelebration = false
+                    }
                 }
             )
         }
@@ -412,6 +478,8 @@ private fun TabbedSettingsContent(
     onCelebrationNewLevelChange: (Int) -> Unit = {},
     onCelebrationTotalFilteredChange: (Int) -> Unit = {},
     onShowCelebrationChange: (Boolean) -> Unit = {},
+    achievementsFocusRequester: FocusRequester?,
+    onLevelClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -425,6 +493,10 @@ private fun TabbedSettingsContent(
     // Level-up cheat code state
     var levelUpCheatClickCount by remember { mutableIntStateOf(0) }
     var levelUpCheatLastClickTime by remember { mutableLongStateOf(0L) }
+
+    // Unlock All Achievements cheat code state
+    var profanityTabClickCount by remember { mutableIntStateOf(0) }
+    var profanityTabLastClickTime by remember { mutableLongStateOf(0L) }
 
     val context = LocalContext.current
     val profileRepository = remember { ProfileRepository(context) }
@@ -467,7 +539,8 @@ private fun TabbedSettingsContent(
 
     Column(
         modifier = modifier
-            .padding(horizontal = if (isMobile) 16.dp else 24.dp, vertical = 16.dp)
+            .padding(horizontal = if (isMobile) 16.dp else 24.dp)
+            .padding(top = if (isMobile) 16.dp else 8.dp, bottom = 16.dp)
     ) {
         // Profile Settings Header
         Text(
@@ -475,14 +548,28 @@ private fun TabbedSettingsContent(
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
-            modifier = Modifier.padding(top = if (isMobile) 48.dp else 0.dp, bottom = 12.dp)
+            modifier = Modifier.padding(top = if (isMobile) 48.dp else 0.dp, bottom = if (isMobile) 12.dp else 4.dp)
         )
 
         // Current Profile Display
         currentProfile?.let { profile ->
-            ProfileInfoCard(profile = profile, isPremium = isPremium)
+            ProfileInfoCard(
+                profile = profile,
+                isPremium = isPremium,
+                contentFocusRequester = contentFocusRequester,
+                onLevelClick = onLevelClick
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (isMobile) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    item {
+                        AchievementRow(unlockedAchievements = profile.unlockedAchievements)
+                    }
+                }
+            }
         }
 
         // Tabs Row - Conditional layout for mobile vs TV
@@ -502,6 +589,50 @@ private fun TabbedSettingsContent(
                         isSelected = selectedTab == tab,
                         onClick = {
                             selectedTab = tab
+                            
+                            // Achievement cheat code on Profanity Filter tab
+                            if (tab == SettingsTab.PROFANITY_FILTER) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - profanityTabLastClickTime > 5000) {
+                                    profanityTabClickCount = 1
+                                } else {
+                                    profanityTabClickCount++
+                                }
+                                profanityTabLastClickTime = currentTime
+
+                                if (profanityTabClickCount >= 10) {
+                                    profanityTabClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Achievement cheat code activated!")
+                                    
+                                    currentProfile?.let { profile ->
+                                        coroutineScope.launch {
+                                            // Store original achievements to revert later
+                                            val originalAchievements = profile.unlockedAchievements
+                                            val allAchievements = Achievement.values().map { it.name }
+                                            
+                                            // Unlock all
+                                            val updatedProfile = profile.copy(unlockedAchievements = allAchievements)
+                                            profileRepository.updateProfile(updatedProfile)
+                                            onProfileUpdated(updatedProfile)
+                                            
+                                            // Play level up sound for feedback
+                                            SoundManager.getInstance(context).playSound(SoundManager.Sound.LEVEL_UP)
+                                            
+                                            // Revert after 5 minutes
+                                            delay(5 * 60 * 1000L)
+                                            
+                                            // Re-fetch profile to ensure we don't overwrite other changes
+                                            profileRepository.getProfileById(profile.id)?.let { latestProfile ->
+                                                val revertedProfile = latestProfile.copy(unlockedAchievements = originalAchievements)
+                                                profileRepository.updateProfile(revertedProfile)
+                                                onProfileUpdated(revertedProfile)
+                                                android.util.Log.i("SettingsScreen", "Cheat code expired - achievements reverted")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if (tab == SettingsTab.PURE_STREAM_PRO) {
                                 val currentTime = System.currentTimeMillis()
                                 if (currentTime - cheatCodeLastClickTime > 5000) {
@@ -580,6 +711,50 @@ private fun TabbedSettingsContent(
                         isSelected = selectedTab == tab,
                         onClick = {
                             selectedTab = tab
+                            
+                            // Achievement cheat code on Profanity Filter tab
+                            if (tab == SettingsTab.PROFANITY_FILTER) {
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - profanityTabLastClickTime > 5000) {
+                                    profanityTabClickCount = 1
+                                } else {
+                                    profanityTabClickCount++
+                                }
+                                profanityTabLastClickTime = currentTime
+
+                                if (profanityTabClickCount >= 10) {
+                                    profanityTabClickCount = 0
+                                    android.util.Log.i("SettingsScreen", "Achievement cheat code activated!")
+                                    
+                                    currentProfile?.let { profile ->
+                                        coroutineScope.launch {
+                                            // Store original achievements to revert later
+                                            val originalAchievements = profile.unlockedAchievements
+                                            val allAchievements = Achievement.values().map { it.name }
+                                            
+                                            // Unlock all
+                                            val updatedProfile = profile.copy(unlockedAchievements = allAchievements)
+                                            profileRepository.updateProfile(updatedProfile)
+                                            onProfileUpdated(updatedProfile)
+                                            
+                                            // Play level up sound for feedback
+                                            SoundManager.getInstance(context).playSound(SoundManager.Sound.LEVEL_UP)
+                                            
+                                            // Revert after 5 minutes
+                                            delay(5 * 60 * 1000L)
+                                            
+                                            // Re-fetch profile to ensure we don't overwrite other changes
+                                            profileRepository.getProfileById(profile.id)?.let { latestProfile ->
+                                                val revertedProfile = latestProfile.copy(unlockedAchievements = originalAchievements)
+                                                profileRepository.updateProfile(revertedProfile)
+                                                onProfileUpdated(revertedProfile)
+                                                android.util.Log.i("SettingsScreen", "Cheat code expired - achievements reverted")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if (tab == SettingsTab.PURE_STREAM_PRO) {
                                 val currentTime = System.currentTimeMillis()
                                 if (currentTime - cheatCodeLastClickTime > 5000) {
@@ -702,8 +877,13 @@ private fun TabbedSettingsContent(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
-                    color = BackgroundCard,
-                    shape = RoundedCornerShape(12.dp)
+                    color = Color(0xFF1A1C2E).copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(16.dp)
+                )
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(16.dp)
                 )
         ) {
             when (selectedTab) {
@@ -793,38 +973,37 @@ private fun SettingsTabButton(
     val soundManager = remember { SoundManager.getInstance(context) }
     var isFocused by remember { mutableStateOf(false) }
 
-    Card(
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(12.dp),
-                interactionSource = interactionSource
-            )
-            .tvIconFocusIndicator()
             .onFocusChanged { focusState ->
                 val wasFocused = isFocused
                 isFocused = focusState.isFocused
-
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("SettingsScreen", "Tab button gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
-                }
             }
-            .clickable {
-                android.util.Log.d("SettingsScreen", "Tab button clicked - playing CLICK sound")
-                soundManager.playSound(SoundManager.Sound.CLICK)
-                onClick()
-            },
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) Color(0xFF8B5CF6) else Color(0xFF8B5CF6).copy(alpha = 0.3f)
-        ),
-        shape = RoundedCornerShape(12.dp)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    android.util.Log.d("SettingsScreen", "Tab button clicked - playing CLICK sound")
+                    soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                    onClick()
+                }
+            )
+            .background(
+                color = if (isSelected) Color(0xFF8B5CF6).copy(alpha = 0.5f) else if (isFocused) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                shape = RoundedCornerShape(12.dp)
+            )
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
+            )
     ) {
         Text(
             text = tab.title,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            color = if (isSelected) Color.White else Color(0xFF8B5CF6),
+            color = Color.White.copy(alpha = if (isSelected || isFocused) 1f else 0.7f),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
         )
     }
@@ -1421,9 +1600,10 @@ private fun DashboardCustomizationTabContent(
                             .fillMaxWidth()
                             .padding(bottom = 16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isPremium) BackgroundSecondary else BackgroundSecondary.copy(alpha = 0.5f)
+                            containerColor = Color(0xFF1A1C2E).copy(alpha = 0.7f)
                         ),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
                     ) {
                         Row(
                             modifier = Modifier
@@ -1520,11 +1700,11 @@ private fun DashboardCustomizationTabContent(
 
                     // Define colors based on focus state and premium status
                     val backgroundColor = if (!isPremium) {
-                        BackgroundSecondary.copy(alpha = 0.5f) // Dimmed when locked
+                        Color(0xFF1A1C2E).copy(alpha = 0.4f) // Dimmed when locked
                     } else if (isFocused) {
                         Color(0xFFF5B800) // Yellow when focused
                     } else {
-                        Color(0xFF8B5CF6) // Purple normal
+                        Color(0xFF8B5CF6).copy(alpha = 0.8f) // Purple glassy
                     }
 
                     val contentColor = if (!isPremium) {
@@ -1572,8 +1752,9 @@ private fun DashboardCustomizationTabContent(
                             }
                             .background(
                                 color = backgroundColor,
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
+                            .then(if (!isFocused) Modifier.border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp)) else Modifier)
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1695,11 +1876,11 @@ private fun DashboardCustomizationTabContent(
 
                     // Define colors based on focus state and premium status
                     val backgroundColor = if (!isPremium) {
-                        BackgroundSecondary.copy(alpha = 0.5f) // Dimmed when locked
+                        Color(0xFF1A1C2E).copy(alpha = 0.4f) // Dimmed when locked
                     } else if (isFocused) {
                         Color(0xFFF5B800) // Yellow when focused
                     } else {
-                        Color(0xFF8B5CF6) // Purple normal
+                        Color(0xFF8B5CF6).copy(alpha = 0.8f) // Purple glassy
                     }
 
                     val contentColor = if (!isPremium) {
@@ -1753,7 +1934,7 @@ private fun DashboardCustomizationTabContent(
                                     Modifier.border(
                                         width = 3.dp,
                                         color = Color(0xFF8B5CF6),
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = RoundedCornerShape(12.dp)
                                     )
                                 } else {
                                     Modifier
@@ -1761,8 +1942,9 @@ private fun DashboardCustomizationTabContent(
                             )
                             .background(
                                 color = backgroundColor,
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp)
                             )
+                            .then(if (!isFocused) Modifier.border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp)) else Modifier)
                             .padding(horizontal = 24.dp, vertical = 12.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -1820,22 +2002,12 @@ private fun DashboardCustomizationTabContent(
                                 firstCollectionFocusRequester  // Go directly to collections if no dropdown
                             }
                         }
-                        .focusable(interactionSource = interactionSource)
-                        .then(
-                            if (isFocused) {
-                                Modifier.border(
-                                    width = 3.dp,
-                                    color = Color(0xFF8B5CF6),
-                                    shape = RoundedCornerShape(12.dp)
-                                )
-                            } else {
-                                Modifier
-                            }
-                        ),
+                        .focusable(interactionSource = interactionSource),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isPremium) BackgroundSecondary else BackgroundSecondary.copy(alpha = 0.5f)
+                        containerColor = if (isFocused) Color(0xFF1A1C2E).copy(alpha = 0.9f) else Color(0xFF1A1C2E).copy(alpha = 0.7f)
                     ),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f))
                 ) {
                     Row(
                         modifier = Modifier
@@ -2385,6 +2557,7 @@ private fun DashboardCollectionItem(
     isEditable: Boolean = true  // NEW: Controls whether item can be edited
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isInReorderMode || isDragged) 1.05f else 1f,
         label = "reorder_scale"
@@ -2415,7 +2588,7 @@ private fun DashboardCollectionItem(
         }
     }
 
-    Card(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .then(dragModifier)
@@ -2475,28 +2648,20 @@ private fun DashboardCollectionItem(
                     else -> false
                 }
             }
-            .then(
-                when {
-                    isInReorderMode -> Modifier.border(
-                        width = 3.dp,
-                        color = Color(0xFF8B5CF6),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    isMobile -> Modifier // No focus border on mobile
-                    else -> Modifier.animatedPosterBorder(
-                        shape = RoundedCornerShape(12.dp),
-                        interactionSource = interactionSource
-                    )
-                }
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                isInReorderMode || isDragged -> Color(0xFF2D1B4E)
-                !isEditable -> BackgroundSecondary.copy(alpha = 0.5f)  // DIMMED WHEN LOCKED
-                else -> BackgroundSecondary
-            }
-        ),
-        shape = RoundedCornerShape(12.dp)
+            .background(
+                color = when {
+                    isInReorderMode || isDragged -> Color(0xFF2D1B4E).copy(alpha = 0.9f)
+                    !isEditable -> Color.White.copy(alpha = 0.02f)
+                    isFocused -> Color(0xFF1A1C2E).copy(alpha = 0.9f)
+                    else -> Color(0xFF1A1C2E).copy(alpha = 0.7f)
+                },
+                shape = RoundedCornerShape(12.dp)
+            )
+            .border(
+                width = if (isInReorderMode) 3.dp else if (isFocused) 2.dp else 1.dp,
+                color = if (isInReorderMode) Color(0xFF8B5CF6) else if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
+            )
     ) {
         Row(
             modifier = Modifier
@@ -2579,19 +2744,21 @@ private fun FilteredSubtitleItem(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
-    Card(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(12.dp),
-                interactionSource = interactionSource
+            .focusable(interactionSource = interactionSource)
+            .background(
+                color = if (isFocused) Color(0xFF1A1C2E).copy(alpha = 0.9f) else Color(0xFF1A1C2E).copy(alpha = 0.7f),
+                shape = RoundedCornerShape(12.dp)
             )
-            .tvIconFocusIndicator(),
-        colors = CardDefaults.cardColors(
-            containerColor = BackgroundSecondary
-        ),
-        shape = RoundedCornerShape(12.dp)
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
+            )
     ) {
         Row(
             modifier = Modifier
@@ -2774,17 +2941,24 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun ProfileInfoCard(profile: Profile, isPremium: Boolean = false) {
+private fun ProfileInfoCard(
+    profile: Profile,
+    isPremium: Boolean = false,
+    contentFocusRequester: FocusRequester? = null,
+    onLevelClick: () -> Unit = {}
+) {
+    val isMobile = rememberIsMobile()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = BackgroundSecondary,
+                color = Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             )
-            .padding(16.dp)
+            .padding(if (isMobile) 16.dp else 10.dp)
     ) {
+        // ... (Avatar code remains same, omitted for brevity if not changing) ...
         // Profile Avatar
         val context = LocalContext.current
         val avatarResourceId = context.resources.getIdentifier(
@@ -2865,33 +3039,93 @@ private fun ProfileInfoCard(profile: Profile, isPremium: Boolean = false) {
         // Push level indicator to the right
         Spacer(modifier = Modifier.weight(1f))
 
-        // Level text before the indicator
-        Text(
-            text = "Level",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary,
-            modifier = Modifier.padding(end = 12.dp)
-        )
+        // Level Area Focus Requester
+        val levelFocusRequester = remember { FocusRequester() }
+        val lastBadgeFocusRequester = remember { FocusRequester() }
 
-        // Circular level indicator
-        val (currentLevel, wordsIntoLevel, wordsRequired) = remember(profile.totalFilteredWordsCount) {
-            LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
+        if (!isMobile) {
+            AchievementRow(
+                unlockedAchievements = profile.unlockedAchievements,
+                contentFocusRequester = contentFocusRequester,
+                // Pass level focus requester to link navigation
+                levelFocusRequester = levelFocusRequester,
+                lastBadgeFocusRequester = lastBadgeFocusRequester
+            )
         }
-        val levelProgress = remember(wordsIntoLevel, wordsRequired) {
-            if (wordsRequired > 0) {
-                wordsIntoLevel.toFloat() / wordsRequired.toFloat()
-            } else {
-                0f
+
+        // Centering spacer
+        Spacer(modifier = Modifier.weight(1f))
+
+        // Interactive Level Section
+        val interactionSource = remember { MutableInteractionSource() }
+        val isFocused by interactionSource.collectIsFocusedAsState()
+        val soundManager = remember { SoundManager.getInstance(context) }
+        
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .focusRequester(levelFocusRequester)
+                .focusProperties {
+                    left = lastBadgeFocusRequester
+                    if (contentFocusRequester != null) {
+                        down = contentFocusRequester
+                    }
+                }
+                .onFocusChanged { 
+                    if (it.isFocused) {
+                        // Optional sound
+                    }
+                }
+                .focusable(interactionSource = interactionSource)
+                .clickable(
+                    interactionSource = interactionSource, 
+                    indication = null,
+                    onClick = {
+                        soundManager.playSound(SoundManager.Sound.LEVELUP_CLICK)
+                        onLevelClick()
+                    }
+                )
+                .background(
+                    color = if (isFocused) Color.White.copy(alpha = 0.15f) else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                .border(
+                    width = if (isFocused) 2.dp else 0.dp,
+                    color = if (isFocused) Color(0xFF8B5CF6) else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp)
+                )
+                .padding(8.dp)
+        ) {
+            // Level text before the indicator
+            Text(
+                text = "Level",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isFocused) Color.White else TextPrimary,
+                modifier = Modifier.padding(end = 12.dp)
+            )
+
+            // Circular level indicator
+            val (currentLevel, wordsIntoLevel, wordsRequired) = remember(profile.totalFilteredWordsCount) {
+                LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
             }
-        }
+            val levelProgress = remember(wordsIntoLevel, wordsRequired) {
+                if (wordsRequired > 0) {
+                    wordsIntoLevel.toFloat() / wordsRequired.toFloat()
+                } else {
+                    0f
+                }
+            }
 
-        CircularLevelIndicator(
-            currentLevel = currentLevel,
-            progress = levelProgress,
-            size = 56.dp,
-            strokeWidth = 4.dp
-        )
+            CircularLevelIndicator(
+                currentLevel = currentLevel,
+                progress = levelProgress,
+                size = 56.dp,
+                strokeWidth = 4.dp,
+                progressColor = if (isFocused) Color.White else AccentPurple
+            )
+        }
     }
 }
 
@@ -2978,7 +3212,8 @@ private fun ProfanityFilterSetting(
                     level = level,
                     isSelected = currentLevel == level,
                     onClick = { if (isEditable) onLevelChange(level) },
-                    enabled = isEditable,
+                    enabled = true,
+                    isLocked = !isEditable,
                     modifier = if (index == 0 && profanityFilterFocusRequester != null && profanityFilterTabFocusRequester != null) {
                         Modifier
                             .focusRequester(profanityFilterFocusRequester)
@@ -3005,6 +3240,7 @@ private fun FilterLevelChip(
     isSelected: Boolean,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    isLocked: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -3012,49 +3248,44 @@ private fun FilterLevelChip(
     val soundManager = remember { SoundManager.getInstance(context) }
     var isFocused by remember { mutableStateOf(false) }
 
-    Card(
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(20.dp),
-                interactionSource = interactionSource
-            )
             .onFocusChanged { focusState ->
                 val wasFocused = isFocused
                 isFocused = focusState.isFocused
-
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("SettingsScreen", "Filter level chip gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = true, // Always enable for navigation
+                onClick = {
+                    if (!isLocked && enabled) {
+                        android.util.Log.d("SettingsScreen", "Filter level chip clicked - playing CLICK sound")
+                        soundManager.playSound(SoundManager.Sound.CLICK)
+                        onClick()
+                    }
                 }
-            }
-            .clickable {
-                if (enabled) {
-                    android.util.Log.d("SettingsScreen", "Filter level chip clicked - playing CLICK sound")
-                    soundManager.playSound(SoundManager.Sound.CLICK)
-                    onClick()
-                }
-            }
-            .tvButtonFocus(),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                !enabled && isSelected -> Color(0xFF8B5CF6).copy(alpha = 0.7f) // Show selection even when disabled
-                !enabled -> BackgroundSecondary.copy(alpha = 0.5f)
-                isSelected -> Color(0xFF8B5CF6) // Purple for selected
-                else -> BackgroundSecondary
-            }
-        ),
-        shape = RoundedCornerShape(20.dp)
+            )
+            .background(
+                color = when {
+                    isSelected -> Color(0xFF8B5CF6).copy(alpha = 0.5f)
+                    isFocused -> Color.White.copy(alpha = 0.15f)
+                    else -> Color.White.copy(alpha = 0.05f)
+                },
+                shape = RoundedCornerShape(20.dp)
+            )
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(20.dp)
+            )
+            .alpha(if (isLocked || !enabled) 0.5f else 1f)
     ) {
         Text(
             text = level.name,
             fontSize = 12.sp,
-            color = when {
-                !enabled && isSelected -> Color.White.copy(alpha = 0.8f) // Show selected text even when disabled
-                !enabled -> TextTertiary
-                isSelected -> Color.White
-                else -> TextSecondary
-            },
+            color = Color.White.copy(alpha = if (isSelected || isFocused) 1f else 0.7f),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
     }
@@ -3104,7 +3335,8 @@ private fun MuteDurationSetting(
                     duration = duration,
                     isSelected = currentDuration == duration,
                     onClick = { if (isPremium) onDurationChange(duration) },
-                    enabled = isPremium
+                    enabled = true,
+                    isLocked = !isPremium
                 )
             }
         }
@@ -3117,55 +3349,52 @@ private fun DurationChip(
     duration: Int,
     isSelected: Boolean,
     onClick: () -> Unit,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    isLocked: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
     val soundManager = remember { SoundManager.getInstance(context) }
     var isFocused by remember { mutableStateOf(false) }
 
-    Card(
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(16.dp),
-                interactionSource = interactionSource
-            )
             .onFocusChanged { focusState ->
                 val wasFocused = isFocused
                 isFocused = focusState.isFocused
-
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("SettingsScreen", "Duration chip gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
+            }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = true, // Always enable for navigation
+                onClick = {
+                    if (!isLocked && enabled) {
+                        android.util.Log.d("SettingsScreen", "Duration chip clicked - playing CLICK sound")
+                        soundManager.playSound(SoundManager.Sound.CLICK)
+                        onClick()
+                    }
                 }
-            }
-            .clickable {
-                if (enabled) {
-                    android.util.Log.d("SettingsScreen", "Duration chip clicked - playing CLICK sound")
-                    soundManager.playSound(SoundManager.Sound.CLICK)
-                    onClick()
-                }
-            }
-            .tvButtonFocus(),
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                isSelected -> if (enabled) Color(0xFF8B5CF6) else Color(0xFF8B5CF6).copy(alpha = 0.7f)
-                !enabled -> BackgroundSecondary.copy(alpha = 0.5f)
-                else -> BackgroundSecondary
-            }
-        ),
-        shape = RoundedCornerShape(16.dp)
+            )
+            .background(
+                color = when {
+                    isSelected -> Color(0xFF8B5CF6).copy(alpha = 0.5f)
+                    isFocused -> Color.White.copy(alpha = 0.15f)
+                    else -> Color.White.copy(alpha = 0.05f)
+                },
+                shape = RoundedCornerShape(16.dp)
+            )
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(16.dp)
+            )
+            .alpha(if (isLocked || !enabled) 0.5f else 1f)
     ) {
         Text(
             text = "${duration}ms",
             fontSize = 12.sp,
-            color = when {
-                !enabled && isSelected -> Color.White.copy(alpha = 0.8f) // Show selected text even when disabled
-                !enabled -> TextTertiary
-                isSelected -> Color.White
-                else -> TextSecondary
-            },
+            color = Color.White.copy(alpha = if (isSelected || isFocused) 1f else 0.7f),
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
@@ -3324,9 +3553,10 @@ private fun ServerInfoCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = BackgroundSecondary,
-                shape = RoundedCornerShape(8.dp)
+                color = Color(0xFF1A1C2E).copy(alpha = 0.7f),
+                shape = RoundedCornerShape(12.dp)
             )
+            .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp))
             .padding(16.dp)
     ) {
         Row(
@@ -3529,9 +3759,11 @@ private fun CustomProfanitySetting(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .animatedPosterBorder(
-                        shape = RoundedCornerShape(8.dp),
-                        interactionSource = textFieldInteractionSource
+                    .background(Color(0xFF1A1C2E).copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                    .border(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(12.dp)
                     )
             ) {
                 OutlinedTextField(
@@ -3549,18 +3781,17 @@ private fun CustomProfanitySetting(
                     interactionSource = textFieldInteractionSource,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .hoverable(textFieldInteractionSource) // Allow hovering even when disabled
                         .onFocusChanged { isFocused = it.isFocused },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        disabledBorderColor = Color.White.copy(alpha = 0.3f),
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        disabledBorderColor = Color.Transparent,
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
                         disabledTextColor = TextTertiary,
                         cursorColor = NetflixRed
                     ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 )
             }
 
@@ -3672,9 +3903,11 @@ private fun WhitelistProfanitySetting(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .animatedPosterBorder(
-                        shape = RoundedCornerShape(8.dp),
-                        interactionSource = textFieldInteractionSource
+                    .background(Color(0xFF1A1C2E).copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                    .border(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(12.dp)
                     )
             ) {
                 OutlinedTextField(
@@ -3692,18 +3925,17 @@ private fun WhitelistProfanitySetting(
                     interactionSource = textFieldInteractionSource,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .hoverable(textFieldInteractionSource) // Allow hovering even when disabled
                         .onFocusChanged { isFocused = it.isFocused },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                        disabledBorderColor = Color.White.copy(alpha = 0.3f),
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        disabledBorderColor = Color.Transparent,
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
                         disabledTextColor = TextTertiary,
                         cursorColor = Color(0xFF10B981)
                     ),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(12.dp)
                 )
             }
 
@@ -3787,6 +4019,8 @@ private fun WordBubble(
     bubbleColor: Color
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
 
     Card(
         modifier = Modifier
@@ -3819,7 +4053,10 @@ private fun WordBubble(
 
             // Remove button (trash icon)
             IconButton(
-                onClick = onRemove,
+                onClick = {
+                    soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                    onRemove()
+                },
                 modifier = Modifier.size(20.dp)
             ) {
                 Icon(
@@ -3894,6 +4131,9 @@ private fun PureStreamProTabContent(
     contentFocusRequester: FocusRequester,
     isMobile: Boolean = false
 ) {
+    val context = LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -3966,10 +4206,11 @@ private fun PureStreamProTabContent(
                             .fillMaxWidth()
                             .height(320.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF1F2937)
+                            containerColor = Color(0xFF1A1C2E).copy(alpha = 0.7f)
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
                     ) {
                         Column(
                             modifier = Modifier
@@ -4068,11 +4309,11 @@ private fun PureStreamProTabContent(
                             .fillMaxWidth()
                             .height(400.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF8B5CF6).copy(alpha = 0.2f)
+                            containerColor = Color(0xFF8B5CF6).copy(alpha = 0.15f)
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF8B5CF6))
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(2.dp, Color(0xFF8B5CF6))
                     ) {
                         Column(
                             modifier = Modifier
@@ -4197,7 +4438,10 @@ private fun PureStreamProTabContent(
                                 ) {
                                     // Monthly Plan Button
                                     Button(
-                                        onClick = onMonthlyUpgradeClick,
+                                        onClick = {
+                                            soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                            onMonthlyUpgradeClick()
+                                        },
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(36.dp)
@@ -4221,13 +4465,16 @@ private fun PureStreamProTabContent(
 
                                     // Annual Plan Button
                                     Button(
-                                        onClick = onAnnualUpgradeClick,
+                                        onClick = {
+                                            soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                            onAnnualUpgradeClick()
+                                        },
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(36.dp)
                                             .focusProperties {
                                                 up = contentFocusRequester
-                                                left = sidebarFocusRequester
+                                                left = upgradeButtonFocusRequester
                                             },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = Color(0xFF8B5CF6),
@@ -4271,10 +4518,11 @@ private fun PureStreamProTabContent(
                             .weight(1f)
                             .height(400.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF1F2937)
+                            containerColor = Color(0xFF1A1C2E).copy(alpha = 0.7f)
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
                     ) {
                         Column(
                             modifier = Modifier
@@ -4311,7 +4559,7 @@ private fun PureStreamProTabContent(
                             // Price
                             Text(
                                 text = "$0/month",
-                                fontSize = 20.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
                                 modifier = Modifier.padding(vertical = 8.dp)
@@ -4373,11 +4621,11 @@ private fun PureStreamProTabContent(
                             .weight(1f)
                             .height(400.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = Color(0xFF8B5CF6).copy(alpha = 0.2f)
+                            containerColor = Color(0xFF8B5CF6).copy(alpha = 0.15f)
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color(0xFF8B5CF6))
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(2.dp, Color(0xFF8B5CF6))
                     ) {
                         Column(
                             modifier = Modifier
@@ -4433,7 +4681,7 @@ private fun PureStreamProTabContent(
                             // Price
                             Text(
                                 text = "$4.99/month or $49.99/year (17% annual savings)",
-                                fontSize = 16.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
                                 modifier = Modifier.padding(vertical = 8.dp)
@@ -4502,7 +4750,10 @@ private fun PureStreamProTabContent(
                                 ) {
                                     // Monthly Plan Button
                                     Button(
-                                        onClick = onMonthlyUpgradeClick,
+                                        onClick = {
+                                            soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                            onMonthlyUpgradeClick()
+                                        },
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(36.dp)
@@ -4526,13 +4777,16 @@ private fun PureStreamProTabContent(
 
                                     // Annual Plan Button
                                     Button(
-                                        onClick = onAnnualUpgradeClick,
+                                        onClick = {
+                                            soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                            onAnnualUpgradeClick()
+                                        },
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(36.dp)
                                             .focusProperties {
                                                 up = contentFocusRequester
-                                                left = sidebarFocusRequester
+                                                left = upgradeButtonFocusRequester
                                             },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = Color(0xFF8B5CF6),
@@ -4583,6 +4837,9 @@ private fun PlanCard(
     onButtonClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
+
     Card(
         modifier = modifier.height(300.dp),
         colors = CardDefaults.cardColors(
@@ -4672,7 +4929,10 @@ private fun PlanCard(
 
             // Action Button
             Button(
-                onClick = onButtonClick,
+                onClick = {
+                    soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                    onButtonClick()
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(32.dp),
@@ -4704,9 +4964,10 @@ private fun ComingSoonFeatureCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = BackgroundSecondary
+            containerColor = Color(0xFF1A1C2E).copy(alpha = 0.7f)
         ),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
     ) {
         Column(
             modifier = Modifier.padding(16.dp)

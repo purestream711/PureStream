@@ -60,12 +60,13 @@ fun FeatureShowcaseScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .background(NetflixDarkGray)
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
                         Color(0xFF0F172A), // Dark blue-gray top
-                        Color(0xFF1E293B), // Slightly lighter middle
-                        Color(0xFF334155)  // Medium blue-gray bottom
+                        Color(0xFF0D0D0D), // Pure black middle
+                        Color(0xFF0D0D0D)  // Pure black bottom
                     )
                 )
             )
@@ -258,10 +259,11 @@ private fun FeatureCard(
     Card(
         modifier = modifier.height(if (isMobile) 140.dp else 120.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E293B).copy(alpha = 0.8f)
+            containerColor = Color(0xFF1A1C2E).copy(alpha = 0.7f)
         ),
         shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
     ) {
         Column(
             modifier = Modifier

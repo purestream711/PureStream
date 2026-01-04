@@ -11,6 +11,8 @@ class ProfileRepository(context: Context) {
     private val profileDao: ProfileDao = AppDatabase.getDatabase(context).profileDao()
     
     fun getAllProfiles(): Flow<List<Profile>> = profileDao.getAllProfiles()
+
+    suspend fun getAllProfilesList(): List<Profile> = profileDao.getAllProfilesList()
     
     suspend fun getProfileById(profileId: String): Profile? = profileDao.getProfileById(profileId)
     

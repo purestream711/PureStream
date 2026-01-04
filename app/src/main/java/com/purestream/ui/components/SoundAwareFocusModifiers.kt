@@ -20,11 +20,7 @@ fun Modifier.soundAwareFocus(): Modifier = composed {
     val soundManager = remember { SoundManager.getInstance(context) }
     
     this.onFocusChanged { focusState ->
-        // Play move sound when component gains focus
-        if (focusState.isFocused) {
-            android.util.Log.d("SoundAwareFocus", "Component gained focus - playing MOVE sound")
-            soundManager.playSound(SoundManager.Sound.MOVE)
-        }
+        // No sound on focus move as per request
     }
 }
 
@@ -61,10 +57,7 @@ fun Modifier.soundAwareNavigation(
     
     this
         .onFocusChanged { focusState ->
-            if (focusState.isFocused) {
-                android.util.Log.d("SoundAwareNavigation", "Component gained focus - playing MOVE sound")
-                soundManager.playSound(SoundManager.Sound.MOVE)
-            }
+            // No sound on focus move
         }
         .clickable(enabled = enabled) {
             android.util.Log.d("SoundAwareNavigation", "Component clicked - playing CLICK sound")

@@ -123,8 +123,10 @@ class ProfileViewModel(
                 val result = plexRepository.getLibrariesWithAuth(token)
                 result.fold(
                     onSuccess = { libraries ->
+                        // Filter out "Artist" libraries (Music) as they are not supported/needed
+                        val filteredLibraries = libraries.filter { it.type.lowercase() != "artist" }
                         _uiState.value = _uiState.value.copy(
-                            availableLibraries = libraries,
+                            availableLibraries = filteredLibraries,
                             isLoading = false
                         )
                     },

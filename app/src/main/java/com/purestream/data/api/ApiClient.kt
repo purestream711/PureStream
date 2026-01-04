@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
 object ApiClient {
 
     private const val PLEX_BASE_URL = "https://plex.tv/api/v2/"
-
+    
     // Default to a safe fallback until init() is called
     private var deviceName: String = getFallbackDeviceName()
 
@@ -99,15 +99,15 @@ object ApiClient {
         // Use shorter timeouts for local connections to detect failures faster
         val timeoutClient = if (isLocal) {
             okHttpClient.newBuilder()
-                .connectTimeout(5, TimeUnit.SECONDS)  // Faster local detection
+                .connectTimeout(3, TimeUnit.SECONDS)  // Aggressive local detection
                 .readTimeout(10, TimeUnit.SECONDS)
                 .writeTimeout(10, TimeUnit.SECONDS)
                 .build()
         } else {
             okHttpClient.newBuilder()
-                .connectTimeout(15, TimeUnit.SECONDS) // Longer for remote
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
+                .connectTimeout(7, TimeUnit.SECONDS) // Faster failover for remote
+                .readTimeout(15, TimeUnit.SECONDS)
+                .writeTimeout(15, TimeUnit.SECONDS)
                 .build()
         }
 

@@ -31,6 +31,57 @@ class HomeViewModel(
     private val _uiState = MutableStateFlow(HomeState())
     val uiState: StateFlow<HomeState> = _uiState.asStateFlow()
     
+    // Preferences for persisting featured movie selection
+    private val prefs = context.getSharedPreferences("purestream_home_prefs", Context.MODE_PRIVATE)
+    
+    private fun getCachedFeaturedMovieId(profileId: String): String? {
+        val keyId = "featured_id_$profileId"
+        val keyTs = "featured_ts_$profileId"
+        val savedId = prefs.getString(keyId, null)
+        val savedTs = prefs.getLong(keyTs, 0L)
+        val threeDaysMs = 3 * 24 * 60 * 60 * 1000L
+        val now = System.currentTimeMillis()
+
+        if (savedId != null && (now - savedTs) < threeDaysMs) {
+             return savedId
+        }
+        return null
+    }
+
+    private fun selectNewFeaturedMovie(allMovies: List<Movie>, profileId: String): Movie? {
+        if (allMovies.isEmpty()) return null
+        
+        val keyId = "featured_id_$profileId"
+        val keyTs = "featured_ts_$profileId"
+        
+        // Select new: Random Drama from last 20 years
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        val startYear = currentYear - 20
+        
+        val candidates = allMovies.filter { movie ->
+            val isDrama = movie.genres?.any { it.tag.equals("Drama", ignoreCase = true) } == true
+            val isRecent = (movie.year ?: 0) >= startYear
+            isDrama && isRecent
+        }
+        
+        android.util.Log.d("HomeViewModel", "Found ${candidates.size} candidate featured movies (Drama, last 20 years)")
+        
+        val selected = if (candidates.isNotEmpty()) {
+            candidates.random()
+        } else {
+            // Fallback: Random from all movies if no drama/recent found
+            allMovies.random()
+        }
+        
+        prefs.edit()
+            .putString(keyId, selected.ratingKey)
+            .putLong(keyTs, System.currentTimeMillis())
+            .apply()
+            
+        android.util.Log.d("HomeViewModel", "Selected NEW featured movie: ${selected.title}")
+        return selected
+    }
+
     fun setCurrentProfile(profile: Profile) {
         _uiState.value = _uiState.value.copy(currentProfile = profile)
         loadContent()
@@ -187,48 +238,74 @@ class HomeViewModel(
                         android.util.Log.d("HomeViewModel", "  Section $idx: ${section.title} (${section.items.size} items)")
                     }
 
-                    // Extract featured movie - use AI-curated if available, otherwise fallback
+                    // Extract featured movie - Random Drama (last 20 years), rotating every 3 days
                     var featuredContentItem: ContentItem? = null
-
-                    if (_uiState.value.currentProfile?.aiCuratedEnabled == true &&
-                        _uiState.value.currentProfile?.aiFeaturedMovieRatingKey != null) {
-                        // Use AI-curated featured movie
-                        val ratingKey = _uiState.value.currentProfile!!.aiFeaturedMovieRatingKey!!
-                        android.util.Log.d("HomeViewModel", "Using AI-curated featured movie: $ratingKey")
-
-                        // First, try to find the movie in any of the sections
-                        featuredContentItem = sections.flatMap { it.items }.find { it.id == ratingKey }
-
-                        // If not found in sections, fetch it separately from Plex
-                        if (featuredContentItem == null) {
-                            android.util.Log.d("HomeViewModel", "Featured movie not in sections, fetching separately...")
-                            val movieResult = plexRepository.getMovieById(ratingKey)
-                            movieResult.getOrNull()?.let { movie ->
-                                featuredContentItem = ContentItem(
-                                    id = movie.ratingKey,
-                                    title = movie.title,
-                                    type = ContentType.MOVIE,
-                                    thumbUrl = movie.thumbUrl,
-                                    artUrl = movie.artUrl,
-                                    summary = movie.summary,
-                                    year = movie.year,
-                                    rating = movie.rating,
-                                    duration = movie.duration,
-                                    contentRating = movie.contentRating,
-                                    profanityLevel = ProfanityLevel.UNKNOWN,
-                                    hasSubtitles = false
-                                )
-                                android.util.Log.d("HomeViewModel", "Fetched featured movie: ${movie.title}")
+                    val profileId = _uiState.value.currentProfile?.id ?: "guest"
+                    
+                    try {
+                        // Optimization: Check cache first to avoid fetching all movies
+                        val cachedId = getCachedFeaturedMovieId(profileId)
+                        if (cachedId != null) {
+                            val movieResult = plexRepository.getMovieById(cachedId)
+                            if (movieResult.isSuccess) {
+                                val movie = movieResult.getOrNull()
+                                if (movie != null) {
+                                    android.util.Log.d("HomeViewModel", "Using cached featured movie: ${movie.title}")
+                                    featuredContentItem = ContentItem(
+                                        id = movie.ratingKey,
+                                        title = movie.title,
+                                        type = ContentType.MOVIE,
+                                        thumbUrl = movie.thumbUrl,
+                                        artUrl = movie.artUrl,
+                                        logoUrl = movie.logoUrl,
+                                        summary = movie.summary,
+                                        year = movie.year,
+                                        rating = movie.rating,
+                                        duration = movie.duration,
+                                        contentRating = movie.contentRating,
+                                        profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
+                                        hasSubtitles = movie.hasSubtitles
+                                    )
+                                }
                             }
                         }
 
-                        // Fallback to "Recommended for You" if still not found
                         if (featuredContentItem == null) {
-                            android.util.Log.w("HomeViewModel", "Featured movie not found, using fallback")
-                            featuredContentItem = sections.find { it.title == "Recommended for You" }?.items?.firstOrNull()
+                            android.util.Log.d("HomeViewModel", "No valid cached featured movie, selecting new one...")
+                            // 1. Fetch all movies from selected libraries to form the candidate pool
+                            val allMovies = mutableListOf<Movie>()
+                            for (libId in selectedLibraries) {
+                                val movies = plexRepository.getMovies(libId, profileId = profileId).getOrNull()
+                                if (movies != null) allMovies.addAll(movies)
+                            }
+                            
+                            // 2. Select new featured movie
+                            val featuredMovie = selectNewFeaturedMovie(allMovies, profileId)
+                            
+                            if (featuredMovie != null) {
+                                featuredContentItem = ContentItem(
+                                    id = featuredMovie.ratingKey,
+                                    title = featuredMovie.title,
+                                    type = ContentType.MOVIE,
+                                    thumbUrl = featuredMovie.thumbUrl,
+                                    artUrl = featuredMovie.artUrl,
+                                    logoUrl = featuredMovie.logoUrl,
+                                    summary = featuredMovie.summary,
+                                    year = featuredMovie.year,
+                                    rating = featuredMovie.rating,
+                                    duration = featuredMovie.duration,
+                                    contentRating = featuredMovie.contentRating,
+                                    profanityLevel = featuredMovie.profanityLevel ?: ProfanityLevel.UNKNOWN,
+                                    hasSubtitles = featuredMovie.hasSubtitles
+                                )
+                            }
                         }
-                    } else {
-                        // Use traditional "Recommended for You" first movie
+                    } catch (e: Exception) {
+                        android.util.Log.e("HomeViewModel", "Error selecting featured movie: ${e.message}", e)
+                    }
+
+                    // Fallback to "Recommended for You" first movie if custom selection failed
+                    if (featuredContentItem == null) {
                         featuredContentItem = sections.find { it.title == "Recommended for You" }?.items?.firstOrNull()
                     }
 
@@ -237,6 +314,18 @@ class HomeViewModel(
                         featuredMovie = featuredContentItem,
                         isLoading = false
                     )
+
+                    // Pre-fetch featured movie details for instant loading on click
+                    featuredContentItem?.let { item ->
+                        viewModelScope.launch {
+                            try {
+                                android.util.Log.d("HomeViewModel", "Pre-fetching details for featured movie: ${item.title}")
+                                plexRepository.getMovieDetails(item.id)
+                            } catch (e: Exception) {
+                                // Ignore background pre-fetch errors
+                            }
+                        }
+                    }
 
                     android.util.Log.d("HomeViewModel", "Updated UI state with ${sections.size} sections")
                 },

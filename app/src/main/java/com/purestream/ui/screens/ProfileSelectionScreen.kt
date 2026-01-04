@@ -1,26 +1,31 @@
 package com.purestream.ui.screens
 
-import androidx.compose.animation.animateColorAsState // Added for smooth color transitions
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -29,19 +34,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.hoverable
-import com.purestream.ui.theme.tvCircularFocusIndicator
-import com.purestream.ui.theme.animatedProfileBorder
-// com.purestream.ui.theme.getAnimatedButtonBackgroundColor (Removed usage to customize colors)
 import com.purestream.data.model.Profile
 import com.purestream.data.model.ProfileType
 import com.purestream.data.model.ProfanityFilterLevel
-import com.purestream.ui.theme.NetflixDarkGray
+import com.purestream.ui.theme.tvCircularFocusIndicator
+import com.purestream.ui.theme.animatedProfileBorder
 import com.purestream.utils.rememberIsMobile
 import com.purestream.utils.LevelCalculator
-import androidx.compose.foundation.lazy.LazyColumn
+import com.purestream.utils.SoundManager
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -57,6 +58,27 @@ fun ProfileSelectionScreen(
     val isMobile = rememberIsMobile()
     var showDeleteMode by remember { mutableStateOf(false) }
     var profileToDelete by remember { mutableStateOf<Profile?>(null) }
+    
+    // Animation state
+    var contentVisible by remember { mutableStateOf(false) }
+    
+    // Entrance animations
+    val contentAlpha by animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0f,
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "content_alpha"
+    )
+    val contentScale by animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0.92f,
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "content_scale"
+    )
+
+    // Trigger entrance
+    LaunchedEffect(Unit) {
+        delay(100)
+        contentVisible = true
+    }
 
     // Intercept back button to trigger proper cleanup in MainActivity
     androidx.activity.compose.BackHandler {
@@ -77,7 +99,6 @@ fun ProfileSelectionScreen(
     // Handle profile deletion with proper focus management
     LaunchedEffect(profileToDelete) {
         profileToDelete?.let { profile ->
-            // Calculate remaining profiles BEFORE deleting to decide focus target
             val remainingProfiles = profiles.filter { it.id != profile.id }
             val validProfilesCount = if (isPremium) {
                 remainingProfiles.size
@@ -86,59 +107,41 @@ fun ProfileSelectionScreen(
             }
 
             if (validProfilesCount == 0) {
-                // No profiles will be left - prepare to exit manage mode
                 showDeleteMode = false
-                
-                // Perform deletion
                 onDeleteProfile(profile)
-                
-                // Wait for UI to update and show Create button
-                kotlinx.coroutines.delay(100)
+                delay(100)
                 try {
                     createProfileFocusRequester.requestFocus()
                 } catch (e: Exception) {
                     android.util.Log.w("ProfileSelectionScreen", "Failed to focus Create button: ${e.message}")
                 }
             } else {
-                // Profiles will still exist - safe to focus Cancel button
-                // Focus BEFORE deletion to avoid focus being lost when item disappears
                 try {
                     manageButtonFocusRequester.requestFocus()
                 } catch (e: Exception) {
                     android.util.Log.w("ProfileSelectionScreen", "Failed to focus Cancel button: ${e.message}")
                 }
                 
-                // Perform deletion
                 onDeleteProfile(profile)
-                
-                // Optional: Try focusing again after delay just in case first attempt failed
-                kotlinx.coroutines.delay(100)
+                delay(100)
                 try {
                     manageButtonFocusRequester.requestFocus()
                 } catch (e: Exception) {
                     // Ignore
                 }
             }
-
             profileToDelete = null
         }
     }
 
-    // Set initial focus to first profile or create profile button
-    // Only run this when not in delete mode to avoid stealing focus from Cancel button during deletion
+    // Set initial focus
     LaunchedEffect(profiles, isPremium, showDeleteMode) {
         if (!showDeleteMode) {
-            val validProfiles = if (isPremium) {
-                profiles
-            } else {
-                profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
-            }
-            
+            val validProfiles = if (isPremium) profiles else profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
             try {
                 if (validProfiles.isNotEmpty()) {
                     firstProfileFocusRequester.requestFocus()
                 } else {
-                    // When no valid profiles exist, focus the "Add Profile" button
                     createProfileFocusRequester.requestFocus()
                 }
             } catch (e: Exception) {
@@ -150,217 +153,196 @@ fun ProfileSelectionScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(NetflixDarkGray)
+            .background(Color.Black)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Color(0xFF0F172A), Color(0xFF0D0D0D))
+                )
+            )
     ) {
+        // Pulsating Background Glow
+        val infiniteTransition = rememberInfiniteTransition(label = "bg_glow")
+        val glowAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.2f,
+            targetValue = 0.4f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(4000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "glow_alpha"
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF8B5CF6).copy(alpha = glowAlpha), Color.Transparent),
+                        radius = 1000f
+                    )
+                )
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(48.dp),
+                .graphicsLayer {
+                    alpha = contentAlpha
+                    scaleX = contentScale
+                    scaleY = contentScale
+                }
+                .padding(if (isMobile) 24.dp else 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Header
             Text(
                 text = "Who's Watching?",
-                fontSize = if (isMobile) 48.sp else 40.sp, // Reduce font size on TV for better spacing
-                fontWeight = FontWeight.Bold,
+                fontSize = if (isMobile) 32.sp else 44.sp,
+                fontWeight = FontWeight.Black,
                 color = Color.White,
+                letterSpacing = 1.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 24.dp)
+                modifier = Modifier.padding(top = if (isMobile) 64.dp else 40.dp)
             )
 
-            Spacer(modifier = Modifier.height(if (isMobile) 64.dp else 48.dp)) // Reduce spacing on TV for better layout
+            Spacer(modifier = Modifier.height(if (isMobile) 64.dp else 64.dp))
 
-            // Profiles Grid - check if we have valid profiles after premium filtering
-            val validProfiles = if (isPremium) {
-                profiles
-            } else {
-                profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
-            }
+            val validProfiles = if (isPremium) profiles else profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
+            
             if (profiles.isEmpty() || validProfiles.isEmpty()) {
-                // No profiles - show create prompt
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = if (profiles.isEmpty()) {
-                            "No profiles found. Create your first profile to get started."
-                        } else {
-                            "No available profiles. Create an adult profile to get started."
-                        },
-                        fontSize = 20.sp,
-                        color = Color(0xFFB3B3B3),
+                        text = if (profiles.isEmpty()) "Create your first profile to get started." else "Create an adult profile to get started.",
+                        fontSize = 18.sp,
+                        color = Color.White.copy(alpha = 0.6f),
                         textAlign = TextAlign.Center
                     )
-
                     Spacer(modifier = Modifier.height(32.dp))
-
-                    CreateProfileCard(
-                        onClick = onCreateProfile,
-                        focusRequester = createProfileFocusRequester
-                    )
+                    CreateProfileCard(onClick = onCreateProfile, focusRequester = createProfileFocusRequester)
                 }
             } else {
-                // Show existing profiles - responsive layout
                 if (isMobile) {
-                    // Mobile: Vertical stacking with LazyColumn
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(24.dp),
-                        contentPadding = PaddingValues(horizontal = 32.dp),
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Limit profile access for free users - filter out child profiles and limit adult profiles to 1
-                        val profilesToShow = if (isPremium) {
-                            profiles
-                        } else {
-                            profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
-                        }
-                        items(profilesToShow.size) { index ->
-                            val profile = profilesToShow[index]
-                            ProfileCard(
-                                profile = profile,
-                                showDeleteMode = showDeleteMode,
-                                onClick = { onProfileSelect(profile) },
-                                onDelete = { profileToDelete = profile },
-                                onEdit = { onEditProfile(profile) },
-                                editButtonFocusRequester = profileEditButtonFocusRequesters[index],
-                                deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
-                                manageButtonFocusRequester = manageButtonFocusRequester,
-                                nextEditButtonFocusRequester = profileEditButtonFocusRequesters.getOrNull(index + 1),
-                                prevDeleteButtonFocusRequester = profileDeleteButtonFocusRequesters.getOrNull(index - 1),
-                                profileFocusRequester = if (index == 0) firstProfileFocusRequester else null
-                            )
-                        }
-
-                        // Add new profile option - always show for premium, or for free users if they have space
-                        if (isPremium || profilesToShow.size < 1) {
-                            item {
-                                CreateProfileCard(onClick = onCreateProfile)
-                            }
-                        }
-
-                        // Manage Profiles button - mobile only (inside scrollable content)
-                        if (profilesToShow.isNotEmpty()) {
-                            item {
-                                Spacer(modifier = Modifier.height(32.dp))
-
-                                val manageButtonInteractionSource = remember { MutableInteractionSource() }
-                                val isFocused by manageButtonInteractionSource.collectIsFocusedAsState()
-
-                                val manageButtonBackgroundColor by animateColorAsState(
-                                    targetValue = if (isFocused) {
-                                        Color(0xFF8B5CF6) // Purple when focused
-                                    } else {
-                                        if (showDeleteMode) Color(0xFFDC2626) else Color(0xFF6B7280) // Red/Grey when not
-                                    },
-                                    label = "manageButtonColor"
+                        LazyColumn(
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(24.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            val profilesToShow = if (isPremium) profiles else profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
+                            items(profilesToShow.size) { index ->
+                                ProfileCard(
+                                    profile = profilesToShow[index],
+                                    showDeleteMode = showDeleteMode,
+                                    onClick = { onProfileSelect(profilesToShow[index]) },
+                                    onDelete = { profileToDelete = profilesToShow[index] },
+                                    onEdit = { onEditProfile(profilesToShow[index]) },
+                                    editButtonFocusRequester = profileEditButtonFocusRequesters[index],
+                                    deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
+                                    manageButtonFocusRequester = manageButtonFocusRequester,
+                                    nextEditButtonFocusRequester = profileEditButtonFocusRequesters.getOrNull(index + 1),
+                                    prevDeleteButtonFocusRequester = profileDeleteButtonFocusRequesters.getOrNull(index - 1),
+                                    profileFocusRequester = if (index == 0) firstProfileFocusRequester else null,
+                                    delayIndex = index,
+                                    isMobile = true
                                 )
-
-                                Button(
-                                    onClick = { showDeleteMode = !showDeleteMode },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = manageButtonBackgroundColor,
-                                        contentColor = Color.White
-                                    ),
-                                    modifier = Modifier
-                                        .padding(bottom = 24.dp)
-                                        .focusRequester(manageButtonFocusRequester)
-                                        .focusProperties {
-                                            up = if (showDeleteMode && profileEditButtonFocusRequesters.isNotEmpty()) {
-                                                profileEditButtonFocusRequesters[0]
-                                            } else {
-                                                FocusRequester.Default
-                                            }
-                                        }
-                                        .hoverable(manageButtonInteractionSource)
-                                        .focusable(interactionSource = manageButtonInteractionSource)
-                                ) {
-                                    Text(if (showDeleteMode) "Cancel" else "Manage Profiles")
-                                }
                             }
+                            if (isPremium || profilesToShow.size < 1) {
+                                item { CreateProfileCard(onClick = onCreateProfile, isMobile = true) }
+                            }
+                        }
+                        
+                        Box(modifier = Modifier.padding(bottom = 32.dp)) {
+                            ManageButton(showDeleteMode, manageButtonFocusRequester, { showDeleteMode = !showDeleteMode }, isMobile = true)
                         }
                     }
                 } else {
-                    // TV: Horizontal scrolling with LazyRow (original layout)
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
-                        contentPadding = PaddingValues(horizontal = 32.dp)
-                    ) {
-                        // Limit profile access for free users - filter out child profiles and limit adult profiles to 1
-                        val profilesToShow = if (isPremium) {
-                            profiles
-                        } else {
-                            profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
-                        }
-                        items(profilesToShow.size) { index ->
-                            val profile = profilesToShow[index]
-                            ProfileCard(
-                                profile = profile,
-                                showDeleteMode = showDeleteMode,
-                                onClick = { onProfileSelect(profile) },
-                                onDelete = { profileToDelete = profile },
-                                onEdit = { onEditProfile(profile) },
-                                editButtonFocusRequester = profileEditButtonFocusRequesters[index],
-                                deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
-                                manageButtonFocusRequester = manageButtonFocusRequester,
-                                nextEditButtonFocusRequester = profileEditButtonFocusRequesters.getOrNull(index + 1),
-                                prevDeleteButtonFocusRequester = profileDeleteButtonFocusRequesters.getOrNull(index - 1),
-                                profileFocusRequester = if (index == 0) firstProfileFocusRequester else null
-                            )
-                        }
-
-                        // Add new profile option - always show for premium, or for free users if they have space
-                        if (isPremium || profilesToShow.size < 1) {
-                            item {
-                                CreateProfileCard(onClick = onCreateProfile)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(32.dp),
+                            contentPadding = PaddingValues(horizontal = 40.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            val profilesToShow = if (isPremium) profiles else profiles.filter { it.profileType != ProfileType.CHILD }.take(1)
+                            items(profilesToShow.size) { index ->
+                                ProfileCard(
+                                    profile = profilesToShow[index],
+                                    showDeleteMode = showDeleteMode,
+                                    onClick = { onProfileSelect(profilesToShow[index]) },
+                                    onDelete = { profileToDelete = profilesToShow[index] },
+                                    onEdit = { onEditProfile(profilesToShow[index]) },
+                                    editButtonFocusRequester = profileEditButtonFocusRequesters[index],
+                                    deleteButtonFocusRequester = profileDeleteButtonFocusRequesters[index],
+                                    manageButtonFocusRequester = manageButtonFocusRequester,
+                                    nextEditButtonFocusRequester = profileEditButtonFocusRequesters.getOrNull(index + 1),
+                                    prevDeleteButtonFocusRequester = profileDeleteButtonFocusRequesters.getOrNull(index - 1),
+                                    profileFocusRequester = if (index == 0) firstProfileFocusRequester else null,
+                                    delayIndex = index
+                                )
+                            }
+                            if (isPremium || profilesToShow.size < 1) {
+                                item { CreateProfileCard(onClick = onCreateProfile, focusRequester = if (profilesToShow.isEmpty()) createProfileFocusRequester else null) }
                             }
                         }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Manage Profiles button with animation - TV only (mobile has it inside LazyColumn)
-                if (validProfiles.isNotEmpty() && !isMobile) {
-                    val manageButtonInteractionSource = remember { MutableInteractionSource() }
-                    val isFocused by manageButtonInteractionSource.collectIsFocusedAsState()
-
-                    // UPDATED: Logic for Manage/Cancel Button
-                    val manageButtonBackgroundColor by animateColorAsState(
-                        targetValue = if (isFocused) {
-                            Color(0xFF8B5CF6) // Purple when focused
-                        } else {
-                            if (showDeleteMode) Color(0xFFDC2626) else Color(0xFF6B7280) // Original colors
-                        },
-                        label = "manageButtonColor"
-                    )
-
-                    Button(
-                        onClick = { showDeleteMode = !showDeleteMode },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = manageButtonBackgroundColor,
-                            contentColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .width(if (showDeleteMode) 90.dp else 150.dp)
-                            .height(32.dp)
-                            .focusRequester(manageButtonFocusRequester)
-                            .focusProperties {
-                                up = if (showDeleteMode && profileEditButtonFocusRequesters.isNotEmpty()) {
-                                    profileEditButtonFocusRequesters[0]
-                                } else {
-                                    FocusRequester.Default
-                                }
-                            }
-                            .hoverable(manageButtonInteractionSource)
-                            .focusable(interactionSource = manageButtonInteractionSource),
-                        contentPadding = PaddingValues(4.dp)
-                    ) {
-                        Text(if (showDeleteMode) "Cancel" else "Manage Profiles")
+                        Spacer(modifier = Modifier.height(64.dp))
+                        ManageButton(showDeleteMode, manageButtonFocusRequester, { showDeleteMode = !showDeleteMode })
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ManageButton(
+    showDeleteMode: Boolean,
+    focusRequester: FocusRequester,
+    onClick: () -> Unit,
+    isMobile: Boolean = false
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
+    
+    val backgroundColor by animateColorAsState(
+        targetValue = when {
+            isFocused -> Color(0xFF8B5CF6)
+            showDeleteMode -> Color(0xFFDC2626)
+            else -> Color.White.copy(alpha = 0.1f)
+        },
+        label = "btn_bg"
+    )
+
+    Button(
+        onClick = {
+            soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+            onClick()
+        },
+        colors = ButtonDefaults.buttonColors(
+            containerColor = backgroundColor,
+            contentColor = if (isFocused || showDeleteMode) Color.White else Color.White.copy(alpha = 0.6f)
+        ),
+        shape = RoundedCornerShape(6.dp), // Scaled corner
+        modifier = Modifier
+            .height(if (isMobile) 29.dp else 22.dp) // 30% larger on mobile
+            .padding(horizontal = 16.dp)
+            .focusRequester(focusRequester)
+            .hoverable(interactionSource)
+            .focusable(interactionSource = interactionSource),
+        contentPadding = PaddingValues(horizontal = 12.dp) // Reduced padding
+    ) {
+        Text(
+            text = if (showDeleteMode) "DONE" else "MANAGE PROFILES",
+            fontSize = if (isMobile) 12.sp else 9.sp, // Larger font on mobile
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
+        )
     }
 }
 
@@ -376,238 +358,160 @@ fun ProfileCard(
     manageButtonFocusRequester: FocusRequester? = null,
     nextEditButtonFocusRequester: FocusRequester? = null,
     prevDeleteButtonFocusRequester: FocusRequester? = null,
-    profileFocusRequester: FocusRequester? = null
+    profileFocusRequester: FocusRequester? = null,
+    delayIndex: Int = 0,
+    isMobile: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+    
+    var visible by remember { mutableStateOf(false) }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(600, delayMillis = 200 + (delayIndex * 100)),
+        label = "item_alpha"
+    )
+    
+    LaunchedEffect(Unit) { visible = true }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(140.dp)
+            .width(120.dp) // 75% of 160dp
+            .graphicsLayer { this.alpha = alpha }
             .then(
                 if (!showDeleteMode) {
-                    // Normal mode: full interactivity
                     Modifier
-                        .then(
-                            if (profileFocusRequester != null) {
-                                Modifier.focusRequester(profileFocusRequester)
-                            } else {
-                                Modifier
-                            }
-                        )
+                        .then(if (profileFocusRequester != null) Modifier.focusRequester(profileFocusRequester) else Modifier)
                         .hoverable(interactionSource)
                         .focusable(interactionSource = interactionSource)
-                        .tvCircularFocusIndicator(focusScale = 1.1f)
-                        .clickable { onClick() }
-                } else {
-                    // Manage mode: completely non-interactive, no focus, no click
-                    Modifier
-                }
+                        .clickable { 
+                            soundManager.playSound(SoundManager.Sound.CLICK)
+                            onClick() 
+                        }
+                } else Modifier
             )
     ) {
-        // Profile Avatar with animated border (only when not in delete mode)
-        val context = LocalContext.current
-        val avatarResourceId = context.resources.getIdentifier(
-            profile.avatarImage,
-            "drawable",
-            context.packageName
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(105.dp) // 75% of 140dp
+                .background(
+                    color = if (isFocused) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(18.dp) // Scaled
+                )
+                .border(
+                    width = if (isFocused) 2.dp else 1.dp,
+                    color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(18.dp)
+                )
+                .padding(9.dp) // 75% of 12dp
+        ) {
+            val avatarResourceId = remember(profile.avatarImage) {
+                context.resources.getIdentifier(profile.avatarImage, "drawable", context.packageName)
+            }
+
+            if (avatarResourceId != 0) {
+                Image(
+                    painter = painterResource(id = avatarResourceId),
+                    contentDescription = profile.name,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)), // Scaled
+                    contentScale = ContentScale.Crop
+                )
+            }
+            
+            if (showDeleteMode) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(24.dp)) // Scaled
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp)) // Scaled
+
+        Text(
+            text = profile.name,
+            fontSize = 14.sp, // ~75% of 18sp
+            fontWeight = FontWeight.Bold,
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.8f),
+            textAlign = TextAlign.Center
         )
 
-        if (avatarResourceId != 0) {
-            Image(
-                painter = painterResource(id = avatarResourceId),
-                contentDescription = "${profile.name} Avatar",
-                modifier = Modifier
-                    .size(120.dp)
-                    .then(
-                        if (!showDeleteMode) {
-                            Modifier.animatedProfileBorder(interactionSource = interactionSource)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .clip(CircleShape),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            // Fallback to text avatar if image not found
-            Box(
-                modifier = Modifier
-                    .size(100.dp)
-                    .then(
-                        if (!showDeleteMode) {
-                            Modifier.animatedProfileBorder(interactionSource = interactionSource)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .background(
-                        color = Color(0xFF6366F1),
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            val level = LevelCalculator.calculateLevel(profile.totalFilteredWordsCount).first
+            Surface(
+                color = Color(0xFF8B5CF6).copy(alpha = 0.15f),
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.3f))
             ) {
                 Text(
-                    text = profile.name.take(2).uppercase(),
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    text = "LVL $level",
+                    fontSize = 9.sp, // ~75% of 11sp
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFFC4B5FD),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                )
+            }
+
+            Surface(
+                color = if (profile.profileType == ProfileType.ADULT) Color(0xFF3B82F6).copy(alpha = 0.15f) else Color(0xFF10B981).copy(alpha = 0.15f),
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(1.dp, if (profile.profileType == ProfileType.ADULT) Color(0xFF3B82F6).copy(alpha = 0.3f) else Color(0xFF10B981).copy(alpha = 0.3f))
+            ) {
+                Text(
+                    text = profile.profileType.name,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (profile.profileType == ProfileType.ADULT) Color(0xFF93C5FD) else Color(0xFF6EE7B7),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Profile Name
-        Text(
-            text = profile.name,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color.White,
-            textAlign = TextAlign.Center
-        )
-
-        // Profile Type Badge
-        Text(
-            text = if (profile.profileType == ProfileType.CHILD) "Child" else "Adult",
-            fontSize = 12.sp,
-            color = if (profile.profileType == ProfileType.CHILD) Color(0xFF10B981) else Color(0xFF6366F1),
-            modifier = Modifier
-                .background(
-                    color = if (profile.profileType == ProfileType.CHILD)
-                        Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFF6366F1).copy(alpha = 0.2f),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                )
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // Level Display
-        val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile.totalFilteredWordsCount)
-        Text(
-            text = "Level $currentLevel",
-            fontSize = 12.sp,
-            color = Color(0xFF8B5CF6), // Purple color
-            modifier = Modifier
-                .background(
-                    color = Color(0xFF8B5CF6).copy(alpha = 0.2f),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                )
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
-
-        // Filter Level
-        Text(
-            text = when (profile.profanityFilterLevel) {
-                ProfanityFilterLevel.NONE -> "No Filter"
-                ProfanityFilterLevel.MILD -> "Mild Filter"
-                ProfanityFilterLevel.MODERATE -> "Moderate Filter"
-                ProfanityFilterLevel.STRICT -> "Strict Filter"
-            },
-            fontSize = 10.sp,
-            color = Color(0xFFB3B3B3),
-            textAlign = TextAlign.Center
-        )
-
-        // Edit and Delete buttons beneath profile when in manage mode
         if (showDeleteMode) {
             Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                // Edit button with animation
-                val editButtonInteractionSource = remember { MutableInteractionSource() }
-                val isEditFocused by editButtonInteractionSource.collectIsFocusedAsState()
-
-                // UPDATED: Purple when focused, Blue when not
-                val editButtonBackgroundColor by animateColorAsState(
-                    targetValue = if (isEditFocused) Color(0xFF8B5CF6) else Color(0xFF2563EB),
-                    label = "editButtonColor"
-                )
-
-                Button(
-                    onClick = {
-                        android.util.Log.d("ProfileCard", "Edit button clicked for profile: ${profile.name}")
-                        onEdit()
-                    },
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val buttonSize = if (isMobile) 31.dp else 24.dp
+                val iconSize = if (isMobile) 18.dp else 14.dp
+                
+                val editInteractionSource = remember { MutableInteractionSource() }
+                val isEditFocused by editInteractionSource.collectIsFocusedAsState()
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(32.dp)
-                        .then(
-                            if (editButtonFocusRequester != null) {
-                                Modifier
-                                    .focusRequester(editButtonFocusRequester)
-                                    .focusProperties {
-                                        right = deleteButtonFocusRequester ?: FocusRequester.Default
-                                        left = prevDeleteButtonFocusRequester ?: FocusRequester.Default
-                                        down = manageButtonFocusRequester ?: FocusRequester.Default
-                                    }
-                            } else {
-                                Modifier
-                            }
-                        )
-                        .hoverable(editButtonInteractionSource)
-                        .focusable(interactionSource = editButtonInteractionSource),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = editButtonBackgroundColor,
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(4.dp)
+                        .size(buttonSize)
+                        .background(if (isEditFocused) Color(0xFF8B5CF6) else Color(0xFF2563EB), CircleShape)
+                        .clip(CircleShape)
+                        .focusRequester(editButtonFocusRequester ?: FocusRequester())
+                        .focusable(interactionSource = editInteractionSource)
+                        .clickable { onEdit() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Edit,
-                        contentDescription = "Edit Profile",
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Default.Edit, null, tint = Color.White, modifier = Modifier.size(iconSize))
                 }
-
-                // Delete button with animation
-                val deleteButtonInteractionSource = remember { MutableInteractionSource() }
-                val isDeleteFocused by deleteButtonInteractionSource.collectIsFocusedAsState()
-
-                // UPDATED: Purple when focused, Red when not
-                val deleteButtonBackgroundColor by animateColorAsState(
-                    targetValue = if (isDeleteFocused) Color(0xFF8B5CF6) else Color(0xFFDC2626),
-                    label = "deleteButtonColor"
-                )
-
-                Button(
-                    onClick = {
-                        android.util.Log.d("ProfileCard", "Delete button clicked for profile: ${profile.name}")
-                        onDelete()
-                    },
+                
+                val deleteInteractionSource = remember { MutableInteractionSource() }
+                val isDeleteFocused by deleteInteractionSource.collectIsFocusedAsState()
+                Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(32.dp)
-                        .then(
-                            if (deleteButtonFocusRequester != null) {
-                                Modifier
-                                    .focusRequester(deleteButtonFocusRequester)
-                                    .focusProperties {
-                                        left = editButtonFocusRequester ?: FocusRequester.Default
-                                        right = nextEditButtonFocusRequester ?: FocusRequester.Default
-                                        down = manageButtonFocusRequester ?: FocusRequester.Default
-                                    }
-                            } else {
-                                Modifier
-                            }
-                        )
-                        .hoverable(deleteButtonInteractionSource)
-                        .focusable(interactionSource = deleteButtonInteractionSource),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = deleteButtonBackgroundColor,
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(4.dp)
+                        .size(buttonSize)
+                        .background(if (isDeleteFocused) Color(0xFF8B5CF6) else Color(0xFFDC2626), CircleShape)
+                        .clip(CircleShape)
+                        .focusRequester(deleteButtonFocusRequester ?: FocusRequester())
+                        .focusable(interactionSource = deleteInteractionSource)
+                        .clickable { onDelete() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete Profile",
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(Icons.Default.Delete, null, tint = Color.White, modifier = Modifier.size(iconSize))
                 }
             }
         }
@@ -617,40 +521,45 @@ fun ProfileCard(
 @Composable
 fun CreateProfileCard(
     onClick: () -> Unit,
-    focusRequester: FocusRequester? = null
+    focusRequester: FocusRequester? = null,
+    isMobile: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(140.dp)
-            .then(
-                if (focusRequester != null) {
-                    Modifier.focusRequester(focusRequester)
-                } else {
-                    Modifier
-                }
-            )
+            .width(120.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .hoverable(interactionSource)
             .focusable(interactionSource = interactionSource)
-            .tvCircularFocusIndicator(focusScale = 1.1f)
-            .clickable(interactionSource = interactionSource, indication = null) { onClick() }
+            .clickable(interactionSource = interactionSource, indication = null) {
+                soundManager.playSound(SoundManager.Sound.CLICK)
+                onClick()
+            }
     ) {
         Box(
             modifier = Modifier
-                .size(100.dp)
+                .size(105.dp)
                 .background(
-                    color = Color(0xFF374151),
-                    shape = CircleShape
+                    color = if (isFocused) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(18.dp)
+                )
+                .border(
+                    width = 1.dp,
+                    color = if (isFocused) Color.White else Color.White.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(18.dp)
                 ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 Icons.Default.Add,
                 contentDescription = "Add Profile",
-                modifier = Modifier.size(48.dp),
-                tint = Color(0xFFB3B3B3)
+                modifier = Modifier.size(30.dp),
+                tint = if (isFocused) Color.White else Color.White.copy(alpha = 0.4f)
             )
         }
 
@@ -660,7 +569,7 @@ fun CreateProfileCard(
             text = "Add Profile",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
-            color = Color(0xFFB3B3B3),
+            color = if (isFocused) Color.White else Color.White.copy(alpha = 0.4f),
             textAlign = TextAlign.Center
         )
     }

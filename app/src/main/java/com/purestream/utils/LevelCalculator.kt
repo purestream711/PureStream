@@ -3,14 +3,11 @@ package com.purestream.utils
 /**
  * Utility class for calculating RPG-style level progression based on total filtered profanity words.
  *
- * Level progression formula:
- * - Level 1 → 2: 3 words
- * - Level 2 → 3: 5 more words (8 total)
- * - Level 3 → 4: 7 more words (15 total)
- * - Pattern: Each level requires 2 more words than previous level
- *
- * Formula: wordsRequiredForLevel(n) = 2n + 1
- * Total words to reach level n: n² + 2n - 3
+ * New level progression requirements:
+ * - Level 1 → 2: 5 words
+ * - Level 29 → 30: Reach 1000 total words
+ * - Formula: totalWordsToReachLevel(n) = floor(1.05 * n^2 + 1.95 * n - 3.0)
+ * - Max Level: 30
  */
 object LevelCalculator {
 
@@ -19,15 +16,11 @@ object LevelCalculator {
      *
      * @param level The current level (starting from 1)
      * @return Number of words needed to reach the next level
-     *
-     * Examples:
-     * - Level 1 → 2: 3 words
-     * - Level 2 → 3: 5 words
-     * - Level 3 → 4: 7 words
      */
     fun wordsRequiredForLevel(level: Int): Int {
-        if (level < 1) return 3 // Default to first level requirement
-        return (2 * level) + 1
+        if (level < 1) return 5 // Default to first level requirement
+        if (level >= 30) return 0 // Max level reached
+        return totalWordsToReachLevel(level + 1) - totalWordsToReachLevel(level)
     }
 
     /**
@@ -38,14 +31,13 @@ object LevelCalculator {
      *
      * Examples:
      * - Level 1: 0 words (starting level)
-     * - Level 2: 3 words
-     * - Level 3: 8 words (3 + 5)
-     * - Level 4: 15 words (3 + 5 + 7)
+     * - Level 2: 5 words
+     * - Level 30: 1000 words
      */
     fun totalWordsToReachLevel(level: Int): Int {
         if (level <= 1) return 0
-        // Formula: n² - 1
-        return (level * level) - 1
+        // Formula: floor(1.05 * n^2 + 1.95 * n - 3.0)
+        return (1.05 * level * level + 1.95 * level - 3.0).toInt()
     }
 
     /**
@@ -53,12 +45,6 @@ object LevelCalculator {
      *
      * @param totalWords Total profanity words filtered across all time
      * @return Triple of (currentLevel, wordsIntoCurrentLevel, wordsRequiredForNextLevel)
-     *
-     * Example:
-     * - 0 words → (1, 0, 3) = Level 1, 0/3 progress
-     * - 3 words → (2, 0, 5) = Level 2, 0/5 progress
-     * - 5 words → (2, 2, 5) = Level 2, 2/5 progress
-     * - 8 words → (3, 0, 7) = Level 3, 0/7 progress
      */
     fun calculateLevel(totalWords: Int): Triple<Int, Int, Int> {
         if (totalWords < 0) {
@@ -67,8 +53,13 @@ object LevelCalculator {
 
         // Find the current level by checking cumulative totals
         var currentLevel = 1
-        while (totalWords >= totalWordsToReachLevel(currentLevel + 1)) {
+        while (currentLevel < 30 && totalWords >= totalWordsToReachLevel(currentLevel + 1)) {
             currentLevel++
+        }
+        
+        // Cap at level 30
+        if (currentLevel >= 30) {
+            return Triple(30, 0, 0) // Max level reached
         }
 
         // Calculate progress into current level
@@ -87,7 +78,8 @@ object LevelCalculator {
      * @return Progress as a float between 0.0 and 1.0
      */
     fun calculateProgress(wordsIntoLevel: Int, wordsRequiredForNextLevel: Int): Float {
-        if (wordsRequiredForNextLevel <= 0) return 0f
+        // If required is 0 (max level), show full progress
+        if (wordsRequiredForNextLevel <= 0) return 1f
         val progress = wordsIntoLevel.toFloat() / wordsRequiredForNextLevel.toFloat()
         return progress.coerceIn(0f, 1f)
     }

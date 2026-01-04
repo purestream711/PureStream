@@ -67,6 +67,19 @@ class TvShowDetailsViewModel(
             loadTvShowDetailsWithRetry(showId, maxRetries, 0)
         }
     }
+
+    fun setTvShow(tvShow: TvShow) {
+        _uiState.value = _uiState.value.copy(tvShow = tvShow)
+        loadSeasons(tvShow.ratingKey)
+    }
+
+    fun setEpisode(episode: Episode) {
+        _uiState.value = _uiState.value.copy(currentEpisode = episode)
+        // Load watch progress for this specific episode
+        _uiState.value.tvShow?.let {
+            loadProgressForEpisodes()
+        }
+    }
     
     private suspend fun loadTvShowDetailsWithRetry(showId: String, maxRetries: Int, currentAttempt: Int) {
         try {
@@ -124,11 +137,6 @@ class TvShowDetailsViewModel(
                 )
             }
         }
-    }
-    
-    fun setTvShow(tvShow: TvShow) {
-        _uiState.value = _uiState.value.copy(tvShow = tvShow)
-        loadSeasons(tvShow.ratingKey)
     }
     
     fun loadSeasons(tvShowId: String) {
@@ -734,6 +742,19 @@ class TvShowDetailsViewModel(
                 android.util.Log.e("TvShowDetailsViewModel", "Error loading episode progress: ${e.message}", e)
             }
         }
+    }
+
+    fun refreshProgress() {
+        loadProgressForEpisodes()
+        loadProgressForCurrentEpisode()
+    }
+
+    /**
+     * Clear all state - use when switching to demo mode or logging out
+     */
+    fun clearState() {
+        _uiState.value = TvShowDetailsState()
+        android.util.Log.d("TvShowDetailsViewModel", "State cleared - all data reset")
     }
 
     // Load watch progress for the current episode

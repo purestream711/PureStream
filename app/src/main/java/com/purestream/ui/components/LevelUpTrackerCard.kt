@@ -3,6 +3,7 @@ package com.purestream.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,7 +43,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun LevelUpTrackerCard(
     currentProfile: Profile,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isFocused: Boolean = false
 ) {
     // Calculate level information
     val (currentLevel, wordsIntoLevel, wordsRequired) = remember(currentProfile.totalFilteredWordsCount) {
@@ -86,17 +88,31 @@ fun LevelUpTrackerCard(
         ),
         label = "color_animation"
     )
+    
+    // Background color animation
+    val containerColor by animateColorAsState(
+        targetValue = if (isFocused) Color(0xFF1A1C2E).copy(alpha = 0.9f) else Color(0xFF1A1C2E).copy(alpha = 0.7f),
+        label = "container_color"
+    )
+    
+    // Text color for secondary text
+    val secondaryTextColor = Color.White.copy(alpha = 0.6f)
 
     Card(
         modifier = modifier
             .fillMaxWidth()
             .height(120.dp)
-            .scale(scale),
+            .scale(scale)
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(16.dp)
+            ),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1A1A1A) // BackgroundCard color
+            containerColor = containerColor
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Row(
             modifier = Modifier
@@ -104,7 +120,7 @@ fun LevelUpTrackerCard(
                 .padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Shield icon with purple background
+            // Shield icon with background
             Box(
                 modifier = Modifier
                     .size(64.dp)
@@ -143,7 +159,7 @@ fun LevelUpTrackerCard(
                 Text(
                     text = "${currentProfile.totalFilteredWordsCount} words filtered",
                     fontSize = 14.sp,
-                    color = Color.Gray
+                    color = secondaryTextColor
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -156,7 +172,7 @@ fun LevelUpTrackerCard(
                             .fillMaxWidth()
                             .height(8.dp),
                         color = AccentPurple,
-                        trackColor = Color(0xFF2A2A2A),
+                        trackColor = Color.White.copy(alpha = 0.1f),
                         strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
                     )
 
@@ -166,7 +182,7 @@ fun LevelUpTrackerCard(
                     Text(
                         text = "$wordsIntoLevel / $wordsRequired to next level",
                         fontSize = 12.sp,
-                        color = Color.Gray
+                        color = secondaryTextColor
                     )
                 }
             }

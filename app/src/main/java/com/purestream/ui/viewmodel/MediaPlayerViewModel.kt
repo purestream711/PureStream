@@ -102,6 +102,15 @@ class MediaPlayerViewModel(
         com.purestream.data.repository.ProfileRepository(ctx)
     }
 
+    // Achievement Manager
+    private val achievementManager: com.purestream.data.manager.AchievementManager? = context?.let { ctx ->
+        val db = AppDatabase.getDatabase(ctx)
+        // Use existing repositories if possible, or create new ones (overhead is low)
+        val profileRepo = com.purestream.data.repository.ProfileRepository(ctx)
+        val watchRepo = WatchProgressRepository(db, ctx)
+        com.purestream.data.manager.AchievementManager(ctx, profileRepo, watchRepo, db)
+    }
+
     // Progress tracking state
     private var currentMediaRatingKey: String? = null
     private var currentMediaKey: String? = null
@@ -142,7 +151,76 @@ class MediaPlayerViewModel(
 
     private val _uiState = MutableStateFlow(MediaPlayerState())
     val uiState: StateFlow<MediaPlayerState> = _uiState.asStateFlow()
-    
+
+    private val _videoUrl = MutableStateFlow<String?>(null)
+    val videoUrl: StateFlow<String?> = _videoUrl.asStateFlow()
+
+    /**
+     * Load the video streaming URL for the given movie or episode
+     */
+    fun loadVideoUrl(movie: Movie? = null, episode: Episode? = null) {
+        val targetMedia = movie ?: storedMovie ?: episode ?: storedEpisode
+        if (targetMedia == null) {
+            android.util.Log.e("MediaPlayerViewModel", "Cannot load video URL - no media provided")
+            _uiState.value = _uiState.value.copy(error = "Media information unavailable")
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+
+            try {
+                // Ensure connection is ready before proceeding
+                if (!plexRepository.hasValidConnection()) {
+                    android.util.Log.d("MediaPlayerViewModel", "Plex connection not ready for loadVideoUrl, waiting...")
+                    var waitCount = 0
+                    while (!plexRepository.hasValidConnection() && waitCount < 50) { // Wait up to 5s
+                        delay(100)
+                        waitCount++
+                    }
+
+                    if (!plexRepository.hasValidConnection()) {
+                        android.util.Log.w("MediaPlayerViewModel", "Plex connection failed to stabilize after waiting")
+                    } else {
+                        android.util.Log.d("MediaPlayerViewModel", "Plex connection stabilized after ${waitCount * 100}ms")
+                    }
+                }
+
+                android.util.Log.d("MediaPlayerViewModel", "Fetching video URL for: ${if (movie != null) movie.title else episode?.title}")
+
+                // Get the video URL from repository
+                val result = if (targetMedia is Movie) {
+                    plexRepository.getVideoStreamUrl(targetMedia)
+                } else if (targetMedia is Episode) {
+                    plexRepository.getEpisodeVideoStreamUrl(targetMedia)
+                } else {
+                    Result.failure(Exception("Unknown media type"))
+                }
+
+                result.fold(
+                    onSuccess = { url ->
+                        android.util.Log.d("MediaPlayerViewModel", "Successfully fetched video URL")
+                        _videoUrl.value = url
+                        _uiState.value = _uiState.value.copy(isLoading = false)
+                    },
+                    onFailure = { exception ->
+                        android.util.Log.e("MediaPlayerViewModel", "Failed to fetch video URL: ${exception.message}")
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            error = "Failed to start stream: ${exception.message}"
+                        )
+                    }
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("MediaPlayerViewModel", "Error fetching video URL", e)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "Failed to start stream: ${e.message}"
+                )
+            }
+        }
+    }
+
     fun loadFilteredSubtitles(
         movie: Movie? = null,
         tvShow: TvShow? = null,
@@ -359,29 +437,92 @@ class MediaPlayerViewModel(
                     val newTotal = currentProfile.totalFilteredWordsCount + wordsFilteredThisSessionCount
                     val levelInfo = com.purestream.utils.LevelCalculator.calculateLevel(newTotal)
 
-                    val updatedProfile = currentProfile.copy(
+                    var updatedProfile = currentProfile.copy(
                         totalFilteredWordsCount = newTotal,
                         currentLevel = levelInfo.first,
                         wordsFilteredThisLevel = levelInfo.second
                     )
 
-                    profileRepository?.updateProfile(updatedProfile)
-
                     val leveledUp = updatedProfile.currentLevel > sessionStartingLevel
+                    val newlyUnlockedAchievements = mutableListOf<Achievement>()
+
+                    // Check for achievements
+                    achievementManager?.let { manager ->
+                        // First Filter
+                        if (currentProfile.totalFilteredWordsCount == 0 && wordsFilteredThisSessionCount > 0) {
+                            if (!updatedProfile.unlockedAchievements.contains(Achievement.FIRST_FILTER.name)) {
+                                manager.unlockAchievement(updatedProfile.id, Achievement.FIRST_FILTER)
+                                updatedProfile = updatedProfile.copy(
+                                    unlockedAchievements = updatedProfile.unlockedAchievements + Achievement.FIRST_FILTER.name
+                                )
+                                newlyUnlockedAchievements.add(Achievement.FIRST_FILTER)
+                            }
+                        }
+                        // Leveled Up
+                        if (leveledUp) {
+                            if (!updatedProfile.unlockedAchievements.contains(Achievement.LEVELED_UP.name)) {
+                                manager.unlockAchievement(updatedProfile.id, Achievement.LEVELED_UP)
+                                updatedProfile = updatedProfile.copy(
+                                    unlockedAchievements = updatedProfile.unlockedAchievements + Achievement.LEVELED_UP.name
+                                )
+                                newlyUnlockedAchievements.add(Achievement.LEVELED_UP)
+                            }
+                        }
+                        // Silence is Golden
+                        if (updatedProfile.totalFilteredWordsCount >= 1000) {
+                            if (!updatedProfile.unlockedAchievements.contains(Achievement.SILENCE_IS_GOLDEN.name)) {
+                                manager.unlockAchievement(updatedProfile.id, Achievement.SILENCE_IS_GOLDEN)
+                                updatedProfile = updatedProfile.copy(
+                                    unlockedAchievements = updatedProfile.unlockedAchievements + Achievement.SILENCE_IS_GOLDEN.name
+                                )
+                                newlyUnlockedAchievements.add(Achievement.SILENCE_IS_GOLDEN)
+                            }
+                        }
+                        
+                        // Maxed Out
+                        if (updatedProfile.currentLevel >= 30) {
+                            if (!updatedProfile.unlockedAchievements.contains(Achievement.MAXED_OUT.name)) {
+                                manager.unlockAchievement(updatedProfile.id, Achievement.MAXED_OUT)
+                                updatedProfile = updatedProfile.copy(
+                                    unlockedAchievements = updatedProfile.unlockedAchievements + Achievement.MAXED_OUT.name
+                                )
+                                newlyUnlockedAchievements.add(Achievement.MAXED_OUT)
+                            }
+                        }
+                        
+                        // Completionist
+                        val allOtherAchievements = Achievement.values()
+                            .filter { it != Achievement.COMPLETIONIST }
+                            .map { it.name }
+                        
+                        if (updatedProfile.unlockedAchievements.containsAll(allOtherAchievements)) {
+                            if (!updatedProfile.unlockedAchievements.contains(Achievement.COMPLETIONIST.name)) {
+                                manager.unlockAchievement(updatedProfile.id, Achievement.COMPLETIONIST)
+                                updatedProfile = updatedProfile.copy(
+                                    unlockedAchievements = updatedProfile.unlockedAchievements + Achievement.COMPLETIONIST.name
+                                )
+                                newlyUnlockedAchievements.add(Achievement.COMPLETIONIST)
+                            }
+                        }
+                    }
+
+                    profileRepository?.updateProfile(updatedProfile)
 
                     // Log session results
                     android.util.Log.d(
                         "MediaPlayerViewModel",
                         "Session complete: ${wordsFilteredThisSessionCount} words filtered. " +
                         "Level ${sessionStartingLevel} → ${updatedProfile.currentLevel}" +
-                        if (leveledUp) " 🎉 LEVEL UP!" else ""
+                        if (leveledUp) " 🎉 LEVEL UP!" else "" +
+                        if (newlyUnlockedAchievements.isNotEmpty()) " 🏆 Achievements: ${newlyUnlockedAchievements.joinToString { it.title }}" else ""
                     )
 
                     return@withContext LevelUpResult(
                         leveledUp = leveledUp,
                         oldLevel = sessionStartingLevel,
                         newLevel = updatedProfile.currentLevel,
-                        wordsFiltered = updatedProfile.totalFilteredWordsCount
+                        wordsFiltered = updatedProfile.totalFilteredWordsCount,
+                        unlockedAchievements = newlyUnlockedAchievements
                     )
                 } ?: LevelUpResult(leveledUp = false)
             } catch (e: Exception) {
@@ -395,7 +536,8 @@ class MediaPlayerViewModel(
         val leveledUp: Boolean,
         val oldLevel: Int = 0,
         val newLevel: Int = 0,
-        val wordsFiltered: Int = 0
+        val wordsFiltered: Int = 0,
+        val unlockedAchievements: List<Achievement> = emptyList()
     )
 
     fun regenerateSubtitlesWithNewLanguage(
@@ -1055,6 +1197,17 @@ class MediaPlayerViewModel(
         storedMovie = movie
         storedEpisode = episode
         storedTvShow = tvShow
+
+        // CRITICAL: Reset session-specific state to prevent playing previous movie
+        _videoUrl.value = null
+        _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            error = null,
+            filteredSubtitleResult = null,
+            isAudioMuted = false,
+            currentSubtitle = null
+        )
+
         android.util.Log.d("MediaPlayerViewModel", "📦 Stored media for navigation: movie=${movie?.title}, episode=${episode?.title}, tvShow=${tvShow?.title}")
     }
 
@@ -1213,6 +1366,15 @@ class MediaPlayerViewModel(
         // Report to Plex that playback has started
         reportPlaybackState("playing")
 
+        // Check Filter Master achievement
+        achievementManager?.let { manager ->
+            _uiState.value.filteredSubtitleResult?.profanityStats?.profanityEntries?.let { count ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    manager.checkFilterMaster(profileId, count)
+                }
+            }
+        }
+
         // Start periodic progress updates
         startPeriodicProgressUpdates(movie, tvShow, episode)
     }
@@ -1296,6 +1458,20 @@ class MediaPlayerViewModel(
 
                 if (progressPercentage >= 0.90f) {
                     scrobbleContent()
+
+                    // Check for achievements
+                    achievementManager?.let { manager ->
+                        launch(Dispatchers.IO) {
+                            try {
+                                manager.checkMarathonRunner(profileId)
+                                if (movie != null) {
+                                    manager.checkFamilyProtector(profileId)
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("MediaPlayerViewModel", "Error checking achievements: ${e.message}")
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("MediaPlayerViewModel", "Error saving progress: ${e.message}", e)

@@ -26,6 +26,7 @@ import androidx.compose.ui.input.key.*
 import android.view.KeyEvent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.PressInteraction
@@ -54,6 +56,9 @@ import com.purestream.ui.theme.animatedPosterBorder
 import androidx.compose.ui.platform.LocalContext
 import com.purestream.utils.SoundManager
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // Focus state management
 data class NavigationState(
@@ -79,10 +84,33 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onMoviesClick: () -> Unit,
     onTvShowsClick: () -> Unit,
-    onPlayFeatured: () -> Unit = {},
-    onRetry: () -> Unit = {}
+    onPlayFeatured: (Long) -> Unit = {},
+    featuredContentProgress: Float? = null,
+    featuredContentPosition: Long? = null,
+    canAnalyzeProfanity: Boolean = true,
+    onRetry: () -> Unit = {},
+    onNavigateToLevelUpStats: () -> Unit = {}
 ) {
     val isMobile = rememberIsMobile()
+    val context = LocalContext.current
+    
+    // Animation state
+    var contentVisible by remember { mutableStateOf(false) }
+    val contentAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(1000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "content_alpha"
+    )
+    val contentScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0.98f,
+        animationSpec = androidx.compose.animation.core.tween(1000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        label = "content_scale"
+    )
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
+        contentVisible = true
+    }
 
     // Bottom navigation visibility for mobile (auto-hide on scroll)
     var isBottomNavVisible by remember { mutableStateOf(true) }
@@ -146,378 +174,232 @@ fun HomeScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Conditional background based on loading state and content availability
-        when {
-            isLoading || (contentSections.isEmpty() && displayFeaturedContent == null) -> {
-                // Simple NetflixDarkGray background while loading
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(NetflixDarkGray)
-                )
-            }
-            else -> {
-                // Use hero image background when content is loaded with Palette extraction
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(heroBackgroundUrl)
-                        .allowHardware(false) // Required for Palette API to access bitmap
-                        .listener(
-                            onSuccess = { _, result ->
-                                // Extract palette from loaded image
-                                val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
-                                bitmap?.let { bmp ->
-                                    val palette = Palette.from(bmp).generate()
-                                    val swatch = palette.dominantSwatch
-                                    if (swatch != null) {
-                                        val rgb = swatch.rgb
-                                        val r = (rgb shr 16 and 0xFF) / 255f
-                                        val g = (rgb shr 8 and 0xFF) / 255f
-                                        val b = (rgb and 0xFF) / 255f
-                                        // Calculate luminance (0.0 = black, 1.0 = white)
-                                        imageLuminance = 0.299f * r + 0.587f * g + 0.114f * b
-                                        android.util.Log.d("HomeScreen", "Image luminance: $imageLuminance")
-                                    }
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        // Background Image with Palette extraction
+        if (!isLoading && (contentSections.isNotEmpty() || displayFeaturedContent != null)) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(heroBackgroundUrl)
+                    .allowHardware(false) 
+                    .listener(
+                        onSuccess = { _, result ->
+                            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
+                            bitmap?.let { bmp ->
+                                val palette = Palette.from(bmp).generate()
+                                val swatch = palette.dominantSwatch
+                                if (swatch != null) {
+                                    val rgb = swatch.rgb
+                                    val r = (rgb shr 16 and 0xFF) / 255f
+                                    val g = (rgb shr 8 and 0xFF) / 255f
+                                    val b = (rgb and 0xFF) / 255f
+                                    imageLuminance = 0.299f * r + 0.587f * g + 0.114f * b
                                 }
                             }
-                        )
-                        .build(),
-                    contentDescription = "Background",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    alpha = 1.0f // Full visibility, gradients will handle the fade
-                )
-                
-                // Dynamic vertical gradient based on image brightness
-                val isBrightImage = imageLuminance > 0.5f
-                val gradientAlphas = if (isBrightImage) {
-                    // Bright images need heavy scrim for text readability
-                    listOf(0.3f, 0.3f, 0.3f, 0.5f, 0.65f, 0.8f, 0.9f, 0.95f)
-                } else {
-                    // Dark images need subtle scrim
-                    listOf(0.02f, 0.02f, 0.02f, 0.05f, 0.15f, 0.4f, 0.6f, 0.7f)
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = gradientAlphas.map { Color.Black.copy(alpha = it) },
-                                startY = 0f,
-                                endY = Float.POSITIVE_INFINITY
-                            )
-                        )
-                )
-                
-                // Dynamic horizontal gradient for sidebar protection
-                val sidebarAlpha = if (isBrightImage) 0.8f else 0.7f
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = sidebarAlpha), // Sidebar protection
-                                    Color.Black.copy(alpha = 0.1f),         // Quick fade
-                                    Color.Transparent,                        // Clear center
-                                    Color.Transparent
-                                ),
-                                startX = 0f,
-                                endX = 200f  // Narrow sidebar protection
-                            )
-                        )
-                )
+                        }
+                    )
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                alpha = 0.6f 
+            )
+            
+            // Rich Overlay Gradients
+            val isBrightImage = imageLuminance > 0.5f
+            val gradientAlphas = if (isBrightImage) {
+                listOf(0.4f, 0.5f, 0.7f, 0.85f, 1.0f)
+            } else {
+                listOf(0.1f, 0.2f, 0.4f, 0.7f, 1.0f)
             }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = gradientAlphas.map { Color.Black.copy(alpha = it) }
+                        )
+                    )
+            )
         }
         
-        
-        // Content over background
-        if (isMobile) {
-            // Mobile: Use Box to overlay bottom nav on top of content
-            Box(modifier = Modifier.fillMaxSize()) {
-
-                // Main content - fills entire screen
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Transparent)
-                        .verticalScroll(scrollState)
-                ) {
-                    // Mobile content goes here - will copy from TV layout
-                    // Hero Section - Only show when we have content
-                    displayFeaturedContent?.let { featuredContent ->
-                        SimpleHeroSection(
-                            featuredContent = featuredContent,
-                            backgroundImageUrl = heroBackgroundUrl,
-                            onPlayClick = onPlayFeatured,
-                            playButtonFocusRequester = heroPlayButtonFocusRequester,
+        // Main Content Layer
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = contentAlpha
+                    scaleX = contentScale
+                    scaleY = contentScale
+                }
+        ) {
+            if (isMobile) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                    ) {
+                        displayFeaturedContent?.let { featuredContent ->
+                            SimpleHeroSection(
+                                featuredContent = featuredContent,
+                                backgroundImageUrl = heroBackgroundUrl,
+                                onPlayClick = onPlayFeatured,
+                                progress = featuredContentProgress,
+                                position = featuredContentPosition,
+                                canAnalyzeProfanity = canAnalyzeProfanity,
+                                playButtonFocusRequester = heroPlayButtonFocusRequester,
+                                firstMovieFocusRequester = firstMovieFocusRequester,
+                                sidebarFocusRequester = sidebarFocusRequester,
+                                scrollState = scrollState
+                            )
+                        }
+                        
+                        ContentStateLayer(
+                            isLoading = isLoading,
+                            error = error,
+                            contentSections = contentSections,
+                            onRetry = onRetry,
+                            onContentClick = onContentClick,
+                            heroFocusRequester = heroPlayButtonFocusRequester,
                             firstMovieFocusRequester = firstMovieFocusRequester,
+                            isMobile = true,
+                            currentProfile = currentProfile,
+                            onNavigateToLevelUpStats = onNavigateToLevelUpStats
+                        )
+                        
+                        Spacer(modifier = Modifier.height(100.dp))
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isBottomNavVisible,
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    ) {
+                        BottomNavigation(
+                            currentProfile = currentProfile,
+                            onHomeClick = { },
+                            onSearchClick = onSearchClick,
+                            onMoviesClick = onMoviesClick,
+                            onTvShowsClick = onTvShowsClick,
+                            onSettingsClick = onSettings,
+                            onProfileClick = onSwitchUser,
+                            currentSection = "home"
+                        )
+                    }
+                }
+            } else {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.width(80.dp).fillMaxHeight()) {
+                        LeftSidebar(
+                            currentProfile = currentProfile,
+                            onHomeClick = { },
+                            onSearchClick = onSearchClick,
+                            onMoviesClick = onMoviesClick,
+                            onTvShowsClick = onTvShowsClick,
+                            onSettingsClick = onSettings,
+                            onProfileClick = onSwitchUser,
                             sidebarFocusRequester = sidebarFocusRequester,
-                            scrollState = scrollState
+                            heroPlayButtonFocusRequester = heroPlayButtonFocusRequester,
+                            currentSection = "home",
+                            modifier = Modifier.fillMaxHeight()
                         )
                     }
                     
-                    // Content Sections with loading and error states (mobile)
-                    when {
-                        isLoading -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(300.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    color = Color(0xFFF5B800)
-                                )
-                            }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                    ) {
+                        displayFeaturedContent?.let { featuredContent ->
+                            SimpleHeroSection(
+                                featuredContent = featuredContent,
+                                backgroundImageUrl = heroBackgroundUrl,
+                                onPlayClick = onPlayFeatured,
+                                progress = featuredContentProgress,
+                                position = featuredContentPosition,
+                                canAnalyzeProfanity = canAnalyzeProfanity,
+                                playButtonFocusRequester = heroPlayButtonFocusRequester,
+                                firstMovieFocusRequester = firstMovieFocusRequester,
+                                sidebarFocusRequester = sidebarFocusRequester,
+                                scrollState = scrollState
+                            )
                         }
-                        error != null -> {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(300.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                                ) {
-                                    Text(
-                                        text = "Error loading content",
-                                        color = Color.White,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = error,
-                                        color = Color(0xFFB3B3B3),
-                                        fontSize = 14.sp,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Button(
-                                        onClick = onRetry,
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = Color(0xFFF5B800),
-                                            contentColor = Color.Black
-                                        )
-                                    ) {
-                                        Text("Retry")
-                                    }
-                                }
-                            }
-                        }
-                        else -> {
-                            // Content sections for mobile
-                            contentSections.forEachIndexed { index, section ->
-                                ContentSectionRow(
-                                    section = section,
-                                    onContentClick = onContentClick,
-                                    heroFocusRequester = if (index == 0) heroPlayButtonFocusRequester else null,
-                                    firstMovieFocusRequester = if (index == 0) firstMovieFocusRequester else null,
-                                    isFirstSection = index == 0
-                                )
-                            }
-
-                            // Level-Up Tracker
-                            if (currentProfile != null) {
-                                LevelUpTrackerCard(
-                                    currentProfile = currentProfile,
-                                    modifier = Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp)
-                                )
-                            }
-
-                            // Fixed bottom padding for bottom nav overlay
-                            Spacer(modifier = Modifier.height(80.dp))
-                        }
-                    }
-                }
-
-                // Bottom Navigation (Overlay) - animated visibility
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isBottomNavVisible,
-                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
-                            androidx.compose.animation.slideInVertically(
-                                animationSpec = androidx.compose.animation.core.tween(300),
-                                initialOffsetY = { it }
-                            ),
-                    exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
-                           androidx.compose.animation.slideOutVertically(
-                               animationSpec = androidx.compose.animation.core.tween(300),
-                               targetOffsetY = { it }
-                           ),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                ) {
-                    BottomNavigation(
-                        currentProfile = currentProfile,
-                        onHomeClick = { /* Already on home */ },
-                        onSearchClick = onSearchClick,
-                        onMoviesClick = onMoviesClick,
-                        onTvShowsClick = onTvShowsClick,
-                        onSettingsClick = onSettings,
-                        onProfileClick = onSwitchUser,
-                        currentSection = "home"
-                    )
-                }
-            }
-        } else {
-            // TV: Horizontal layout (existing)
-            Row(modifier = Modifier.fillMaxSize()) {
-                // Left Sidebar - Fixed width with transparent background
-                Box(
-                    modifier = Modifier
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .background(Color.Transparent)
-                ) {
-                    LeftSidebar(
-                        currentProfile = currentProfile,
-                        onHomeClick = { /* Already on home */ },
-                        onSearchClick = onSearchClick,
-                        onMoviesClick = onMoviesClick,
-                        onTvShowsClick = onTvShowsClick,
-                        onSettingsClick = onSettings,
-                        onProfileClick = onSwitchUser,
-                        sidebarFocusRequester = sidebarFocusRequester,
-                        heroPlayButtonFocusRequester = heroPlayButtonFocusRequester,
-                        currentSection = "home",
-                        modifier = Modifier.fillMaxHeight()
-                    )
-                }
                 
-                // Main Content Area
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Transparent)
-                        .padding(start = 8.dp)
-                        .verticalScroll(scrollState)
-                ) {
-                    // Hero Section - Only show when we have content
-                    displayFeaturedContent?.let { featuredContent ->
-                        SimpleHeroSection(
-                            featuredContent = featuredContent,
-                            backgroundImageUrl = heroBackgroundUrl,
-                            onPlayClick = onPlayFeatured,
-                            playButtonFocusRequester = heroPlayButtonFocusRequester,
-                            firstMovieFocusRequester = firstMovieFocusRequester,
-                            sidebarFocusRequester = sidebarFocusRequester,
-                            scrollState = scrollState
-                        )
-                    }
-            
-            // Content Sections with loading and error states (no additional background)
-            when {
-                isLoading -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFFF5B800)
-                        )
-                    }
-                }
-                error != null -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Text(
-                                text = "Error loading content",
-                                color = Color.White,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = error,
-                                color = Color(0xFFB3B3B3),
-                                fontSize = 14.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
-                            Button(
-                                onClick = onRetry,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFF5B800),
-                                    contentColor = Color.Black
-                                )
-                            ) {
-                                Text("Retry")
-                            }
-                        }
-                    }
-                }
-                contentSections.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.padding(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = Color(0xFFEF4444),
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Text(
-                                text = "No Plex Libraries Selected",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "To view content, please select libraries in your profile settings.",
-                                fontSize = 14.sp,
-                                color = Color(0xFFB3B3B3),
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        }
-                    }
-                }
-                else -> {
-                    // Content Sections
-                    contentSections.forEachIndexed { index, section ->
-                        ContentSectionRow(
-                            section = section,
+                        ContentStateLayer(
+                            isLoading = isLoading,
+                            error = error,
+                            contentSections = contentSections,
+                            onRetry = onRetry,
                             onContentClick = onContentClick,
-                            heroFocusRequester = if (index == 0) heroPlayButtonFocusRequester else null,
-                            firstMovieFocusRequester = if (index == 0) firstMovieFocusRequester else null,
-                            isFirstSection = index == 0
+                            heroFocusRequester = heroPlayButtonFocusRequester,
+                            firstMovieFocusRequester = firstMovieFocusRequester,
+                            isMobile = false,
+                            currentProfile = currentProfile,
+                            onNavigateToLevelUpStats = onNavigateToLevelUpStats
                         )
+
+                        Spacer(modifier = Modifier.height(100.dp))
                     }
                 }
             }
+        }
+    }
+}
 
-                    // Level-Up Tracker
-                    if (currentProfile != null) {
-                        LevelUpTrackerCard(
-                            currentProfile = currentProfile,
-                            modifier = Modifier.padding(top = 24.dp, start = 48.dp, end = 48.dp)
-                        )
+@Composable
+private fun ContentStateLayer(
+    isLoading: Boolean,
+    error: String?,
+    contentSections: List<ContentSection>,
+    onRetry: () -> Unit,
+    onContentClick: (ContentItem) -> Unit,
+    heroFocusRequester: FocusRequester,
+    firstMovieFocusRequester: FocusRequester,
+    isMobile: Boolean,
+    currentProfile: Profile?,
+    onNavigateToLevelUpStats: () -> Unit
+) {
+    when {
+        isLoading -> {
+            Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color(0xFF8B5CF6))
+            }
+        }
+        error != null -> {
+            Box(Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Oops! Something went wrong", color = Color.White, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(error, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+                    Spacer(Modifier.height(24.dp))
+                    Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6))) {
+                        Text("Retry")
                     }
-
-                    // Bottom spacing
-                    Spacer(modifier = Modifier.height(100.dp))
                 }
+            }
+        }
+        else -> {
+            contentSections.forEachIndexed { index, section ->
+                ContentSectionRow(
+                    section = section,
+                    onContentClick = onContentClick,
+                    heroFocusRequester = if (index == 0) heroFocusRequester else null,
+                    firstMovieFocusRequester = if (index == 0) firstMovieFocusRequester else null,
+                    isFirstSection = index == 0,
+                    delayIndex = index
+                )
+            }
+
+            if (currentProfile != null) {
+                InteractiveLevelUpCard(
+                    currentProfile = currentProfile,
+                    onLevelClick = onNavigateToLevelUpStats,
+                    modifier = Modifier.padding(
+                        top = 32.dp, 
+                        start = if (isMobile) 16.dp else 32.dp, 
+                        end = if (isMobile) 16.dp else 32.dp
+                    )
+                )
             }
         }
     }
@@ -528,212 +410,240 @@ fun HomeScreen(
 fun SimpleHeroSection(
     featuredContent: ContentItem,
     backgroundImageUrl: String,
-    onPlayClick: () -> Unit,
+    onPlayClick: (Long) -> Unit,
+    progress: Float? = null,
+    position: Long? = null,
+    canAnalyzeProfanity: Boolean = true,
     playButtonFocusRequester: FocusRequester,
     firstMovieFocusRequester: FocusRequester,
     sidebarFocusRequester: FocusRequester,
     scrollState: ScrollState,
     modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(300.dp)
-            .padding(top = 16.dp)
-    ) {
+            val isMobile = rememberIsMobile()
+            
+            val playInteractionSource = remember { MutableInteractionSource() }
+            val isPlayFocused by playInteractionSource.collectIsFocusedAsState()
+            
+            val restartInteractionSource = remember { MutableInteractionSource() }
+            val isRestartFocused by restartInteractionSource.collectIsFocusedAsState()
+            
+            val coroutineScope = rememberCoroutineScope()
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
         
-        // Create an InteractionSource to track the Column's focus state
-        val interactionSource = remember { MutableInteractionSource() }
-
-        // Subscribe to the "IsFocused" state directly - guarantees recomposition when focus changes
-        val isFocused by interactionSource.collectIsFocusedAsState()
-
-        val coroutineScope = rememberCoroutineScope()
-
-        // Apply scroll to top when hero section gains focus
-        LaunchedEffect(isFocused) {
-            if (isFocused) {
-                coroutineScope.launch {
-                    // Scroll to absolute top (0) to show entire hero section
-                    scrollState.animateScrollTo(0)
+            LaunchedEffect(isPlayFocused, isRestartFocused) {
+                if (isPlayFocused || isRestartFocused) {
+                    coroutineScope.launch { scrollState.animateScrollTo(0) }
                 }
             }
-        }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
-                .width(700.dp)
-                .focusRequester(playButtonFocusRequester)
-                .focusable(interactionSource = interactionSource)  // Pass interactionSource to focusable
-                .onKeyEvent { keyEvent ->
-                    android.util.Log.d("HeroSection", "Key event received: ${keyEvent.key}, type: ${keyEvent.type}")
-                    when (keyEvent.key) {
-                        Key.Enter,
-                        Key.NumPadEnter,
-                        Key.DirectionCenter -> {
-                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                android.util.Log.d("HeroSection", "Play key pressed, calling onPlayClick()")
-                                // Emit a "Press" interaction for visual feedback
-                                coroutineScope.launch {
-                                    val press = PressInteraction.Press(androidx.compose.ui.geometry.Offset.Zero)
-                                    interactionSource.emit(press)
-                                    interactionSource.emit(PressInteraction.Release(press))
-                                }
-                                onPlayClick()
-                                true
-                            } else false
-                        }
-                        Key.DirectionDown -> {
-                            if (keyEvent.type == KeyEventType.KeyDown) {
-                                android.util.Log.d("HeroSection", "Down key pressed, moving to first movie")
-                                firstMovieFocusRequester.requestFocus()
-                                true
-                            } else false
-                        }
-                        else -> {
-                            android.util.Log.d("HeroSection", "Unhandled key: ${keyEvent.key}")
-                            false
-                        }
+            // Ensure focus is on Play button initially or when progress clears
+            LaunchedEffect(progress) {
+                if (progress == null || progress <= 0f) {
+                    try {
+                        playButtonFocusRequester.requestFocus()
+                    } catch (e: Exception) {
+                        // Focus requester might not be attached yet
                     }
                 }
-                .clickable(
-                    interactionSource = interactionSource,
-                    indication = null,  // Disable default ripple for custom styling
-                    onClick = onPlayClick
-                )
-                .focusProperties {
-                    left = sidebarFocusRequester
-                }
-                .tvCardFocusIndicator(),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Title
-            Text(
-                text = featuredContent.title,
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            
-            // Movie Info Row (Year, Duration, Rating)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+            }
+        
+            Box(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .height(if (isMobile) 420.dp else 340.dp)
+                    .padding(top = if (isMobile) 0.dp else 32.dp)
             ) {
-                // Year
-                featuredContent.year?.let { year ->
-                    if (year > 0) {
-                        Text(
-                            text = year.toString(),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        )
-                    }
-                }
-
-                // Duration
-                featuredContent.duration?.let { duration ->
-                    if (duration > 0) {
-                        Text(
-                            text = formatDuration(duration),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        )
-                    }
-                }
-                
-                // Rating Badge - Show actual content rating if available
-                featuredContent.contentRating?.let { contentRating ->
-                    Box(
-                        modifier = Modifier
-                            .background(
-                                color = Color(0xFF374151),
-                                shape = RoundedCornerShape(4.dp)
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = if (isMobile) 24.dp else 32.dp, bottom = 40.dp)
+                        .widthIn(max = 700.dp)
+                        .clickable(
+                            enabled = isMobile, // Disable on TV to prevent it from stealing focus (Timbuktu issue)
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {
+                                soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                val startPos = if (progress != null && progress > 0f) position ?: 0L else 0L
+                                onPlayClick(startPos)
+                            }
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    // ... (rest of the column content remains the same until buttons)
+                    // (I will include the title and meta row to ensure correct replacement)
+                    if (featuredContent.logoUrl != null) {
+                        if (isMobile) {
+                            // Mobile: Center the clearlogo
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AsyncImage(
+                                    model = featuredContent.logoUrl,
+                                    contentDescription = featuredContent.title,
+                                    modifier = Modifier
+                                        .height(100.dp)
+                                        .widthIn(max = 400.dp),
+                                    contentScale = ContentScale.Fit,
+                                    alignment = Alignment.Center
+                                )
+                            }
+                        } else {
+                            // TV: Keep clearlogo left-aligned
+                            AsyncImage(
+                                model = featuredContent.logoUrl,
+                                contentDescription = featuredContent.title,
+                                modifier = Modifier
+                                    .height(94.dp)
+                                    .widthIn(max = 375.dp),
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.CenterStart
                             )
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
+                        }
+                    } else {
                         Text(
-                            text = contentRating,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            text = featuredContent.title,
+                            fontSize = if (isMobile) 32.sp else 36.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White,
+                            lineHeight = 1.1.sp,
+                            textAlign = TextAlign.Start
                         )
                     }
-                }
-                
-                // Star Rating
-                featuredContent.rating?.let { rating ->
-                    if (rating > 0) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(if (isMobile) 16.dp else 12.dp)
+                    ) {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(4.dp),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
                         ) {
                             Text(
-                                text = "★",
-                                fontSize = 14.sp,
-                                color = Color(0xFFFBBF24)
-                            )
-                            Text(
-                                text = String.format("%.1f", rating),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
+                                featuredContent.contentRating ?: "NR",
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                fontSize = if (isMobile) 12.sp else 9.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                         }
-                    }
-                }
-            }
-            
-            // Description
-            featuredContent.summary?.let { summary ->
-                Text(
-                    text = summary,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Normal,
-                    color = Color.White,
-                    lineHeight = 22.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-            
-            // Action button - Visual only (Column handles all interaction)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                // REPLACED Button WITH Surface to avoid focus competition
-                // Column handles clicks/keys, this is just a visual indicator
-                Surface(
-                    color = if (isFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6),
-                    contentColor = if (isFocused) Color.Black else Color.White,
-                    shape = RoundedCornerShape(4.dp),
-                    modifier = Modifier.height(48.dp)
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                    ) {
                         Text(
-                            text = "Play",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                            "${featuredContent.year}  •  ${formatDuration(featuredContent.duration ?: 0)}",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = if (isMobile) 14.sp else 10.5.sp
                         )
+        
+                        val isProtected = !canAnalyzeProfanity
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .background(
+                                    if (isProtected) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f),
+                                    RoundedCornerShape(if (isMobile) 8.dp else 6.dp)
+                                )
+                                .padding(horizontal = if (isMobile) 12.dp else 9.dp, vertical = if (isMobile) 6.dp else 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isProtected) Icons.Default.Lock else Icons.Default.LockOpen,
+                                contentDescription = null,
+                                tint = if (isProtected) Color(0xFF10B981) else Color(0xFFEF4444),
+                                modifier = Modifier.size(if (isMobile) 16.dp else 12.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = if (isProtected) "Protected" else "Unprotected",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = if (isMobile) 12.sp else 9.sp
+                            )
+                        }
+                    }
+        
+                    Text(
+                        featuredContent.summary ?: "",
+                        modifier = if (isMobile) Modifier else Modifier.fillMaxWidth(0.65f),
+                        fontSize = if (isMobile) 16.sp else 12.sp,
+                        color = Color.White.copy(alpha = 0.8f),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = if (isMobile) 22.sp else 16.sp,
+                        textAlign = TextAlign.Start
+                    )
+                    
+                    // Buttons (25% smaller: 36dp height)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        // Resume/Play Button
+                        Surface(
+                            onClick = {
+                                soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                val startPos = if (progress != null && progress > 0f) position ?: 0L else 0L
+                                onPlayClick(startPos)
+                            },
+                            modifier = Modifier
+                                .height(36.dp)
+                                .focusRequester(playButtonFocusRequester)
+                                .focusProperties { 
+                                    left = sidebarFocusRequester
+                                    down = firstMovieFocusRequester
+                                },
+                            interactionSource = playInteractionSource,
+                            color = if (isPlayFocused || isMobile) Color.White else Color(0xFF8B5CF6),
+                            contentColor = if (isPlayFocused || isMobile) Color.Black else Color.White,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                                Text(
+                                    text = if (progress != null && progress > 0f) "RESUME" else "PLAY",
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.75.sp,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+        
+                        // Restart Button (Always present for focus stability)
+                        val hasProgress = progress != null && progress > 0f
+                        Surface(
+                            onClick = { 
+                                soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                                onPlayClick(0L) 
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .graphicsLayer { alpha = if (hasProgress) 1f else 0f }
+                                .focusProperties { 
+                                    canFocus = hasProgress
+                                    down = firstMovieFocusRequester
+                                },
+                            interactionSource = restartInteractionSource,
+                            color = if (isRestartFocused) Color.White else Color.White.copy(alpha = 0.1f),
+                            contentColor = if (isRestartFocused) Color.Black else Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            border = if (!isRestartFocused && hasProgress) BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)) else null
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Refresh, "Restart", modifier = Modifier.size(18.dp))
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun ContentSectionRow(
     section: ContentSection,
@@ -741,34 +651,36 @@ fun ContentSectionRow(
     heroFocusRequester: FocusRequester? = null,
     firstMovieFocusRequester: FocusRequester? = null,
     isFirstSection: Boolean = false,
+    delayIndex: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier) {
-        // Section Title
+    var visible by remember { mutableStateOf(false) }
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(800, delayMillis = indexToDelay(delayIndex)),
+        label = "row_alpha"
+    )
+    
+    LaunchedEffect(Unit) { visible = true }
+
+    Column(modifier = modifier.graphicsLayer { this.alpha = alpha }.padding(vertical = 16.dp)) {
         Text(
-            text = section.title,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+            text = section.title.uppercase(),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            color = Color.White.copy(alpha = 0.5f),
+            letterSpacing = 2.sp,
+            modifier = Modifier.padding(start = if (rememberIsMobile()) 24.dp else 32.dp, bottom = 12.dp)
         )
         
-        // Content Row
         LazyRow(
-            state = rememberLazyListState(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-                .then(
-                    if (isFirstSection && heroFocusRequester != null) {
-                        Modifier.focusProperties {
-                            up = heroFocusRequester
-                        }
-                    } else {
-                        Modifier
-                    }
-                ),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = if (rememberIsMobile()) 24.dp else 32.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.then(
+                if (isFirstSection && heroFocusRequester != null) {
+                    Modifier.focusProperties { up = heroFocusRequester }
+                } else Modifier
+            )
         ) {
             itemsIndexed(section.items) { index, content ->
                 SimpleContentCard(
@@ -776,14 +688,14 @@ fun ContentSectionRow(
                     onClick = { onContentClick(content) },
                     modifier = if (isFirstSection && index == 0 && firstMovieFocusRequester != null) {
                         Modifier.focusRequester(firstMovieFocusRequester)
-                    } else {
-                        Modifier
-                    }
+                    } else Modifier
                 )
             }
         }
     }
 }
+
+private fun indexToDelay(index: Int): Int = 300 + (index * 150)
 
 @Composable
 fun SimpleContentCard(
@@ -791,8 +703,9 @@ fun SimpleContentCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val cardWidth = 150.dp
-    val cardHeight = 200.dp
+    val isMobile = rememberIsMobile()
+    val cardWidth = if (isMobile) 140.dp else 160.dp
+    val cardHeight = if (isMobile) 200.dp else 240.dp
     var isFocused by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val context = LocalContext.current
@@ -801,46 +714,56 @@ fun SimpleContentCard(
     Card(
         modifier = modifier
             .size(cardWidth, cardHeight)
-            .animatedPosterBorder(interactionSource = interactionSource)
-            .tvCardFocusIndicator()
-            .onFocusChanged { focusState ->
-                val wasFocused = isFocused
-                isFocused = focusState.isFocused
-                
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("HomeScreen", "Content card gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
+                .onFocusChanged { focusState ->
+                    val wasFocused = isFocused
+                    isFocused = focusState.isFocused
                 }
-            }
-            .clickable { 
-                android.util.Log.d("HomeScreen", "Content card clicked - playing CLICK sound")
+            .clickable(interactionSource = interactionSource, indication = null) {
                 soundManager.playSound(SoundManager.Sound.CLICK)
-                onClick() 
-            },
-        colors = CardDefaults.cardColors(
-            containerColor = BackgroundCard
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = if (isFocused) 8.dp else 4.dp
-        ),
-        shape = RoundedCornerShape(8.dp)
+                onClick()
+            }
+            .focusable(interactionSource = interactionSource)
+            .hoverable(interactionSource),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Box(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    color = if (isFocused) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(16.dp)
+                )
+                .border(
+                    width = if (isFocused) 2.dp else 1.dp,
+                    color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(16.dp)
+                )
         ) {
-            // Poster Image
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(NetflixDarkGray)
-            ) {
-                content.thumbUrl?.let { url ->
-                    AsyncImage(
-                        model = url,
-                        contentDescription = content.title,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+            AsyncImage(
+                model = content.thumbUrl,
+                contentDescription = content.title,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                contentScale = ContentScale.Crop
+            )
+            
+            if (isFocused) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))
+                            )
+                        ),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Text(
+                        content.title,
+                        modifier = Modifier.padding(8.dp),
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                        maxLines = 2, textAlign = TextAlign.Center
                     )
                 }
             }
@@ -1032,5 +955,54 @@ private fun formatDuration(durationMs: Long): String {
         "${hours}h ${minutes}m"
     } else {
         "${minutes}m"
+    }
+}
+
+@Composable
+fun InteractiveLevelUpCard(
+    currentProfile: Profile,
+    onLevelClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val focusRequester = remember { FocusRequester() }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+    
+    Box(
+        modifier = modifier
+            .focusRequester(focusRequester)
+            .onFocusChanged { 
+                if (it.isFocused) {
+                        // Optional: 
+                        soundManager.playSound(SoundManager.Sound.CLICK)
+                }
+            }
+            .focusable(interactionSource = interactionSource)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    soundManager.playSound(SoundManager.Sound.LEVELUP_CLICK)
+                    onLevelClick()
+                }
+            )
+            // Handle D-pad Select
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyUp && 
+                    (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter)) {
+                    soundManager.playSound(SoundManager.Sound.LEVELUP_CLICK)
+                    onLevelClick()
+                    true
+                } else {
+                    false
+                }
+            }
+    ) {
+        LevelUpTrackerCard(
+            currentProfile = currentProfile,
+            isFocused = isFocused
+        )
     }
 }

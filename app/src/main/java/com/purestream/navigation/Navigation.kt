@@ -21,6 +21,7 @@ object Destinations {
     const val MEDIA_PLAYER_WITH_URL = "media_player_with_url/{videoUrl}/{title}/{contentId}"
     const val SETTINGS = "settings"
     const val SEARCH = "search"
+    const val LEVEL_UP_STATS = "level_up_stats"
 
     fun loading(workRequestId: String? = null): String {
         return if (workRequestId != null) {

@@ -51,6 +51,8 @@ fun LibraryDropdown(
     var expanded by remember { mutableStateOf(false) }
     var isFocused by remember { mutableStateOf(false) }
     var tempSelectedLibraryId by remember(selectedLibraryId) { mutableStateOf(selectedLibraryId) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
 
     val selectedLibrary = libraries.find { it.key == selectedLibraryId }
 
@@ -83,7 +85,7 @@ fun LibraryDropdown(
             .alpha(alpha)
     ) {
         // Pill-shaped Dropdown Button
-        Card(
+        Box(
             modifier = Modifier
                 .let { mod ->
                     if (!isMobile && dropdownFocusRequester != null) {
@@ -103,27 +105,25 @@ fun LibraryDropdown(
                     }
                 }
                 .onFocusChanged { isFocused = it.isFocused }
-                .focusable() // Ensure Card remains focusable even when clickable is disabled
-                .clickable(enabled = !isLocked) { expanded = !expanded }
-                .wrapContentWidth(), // Pill-shaped, not full width
-            colors = CardDefaults.cardColors(
-                containerColor = if (isFocused && !isMobile) {
-                    if (isLocked) {
-                        yellowColor.copy(alpha = 0.5f)  // Dimmed yellow when focused but locked
-                    } else {
-                        yellowColor  // Full yellow when focused and unlocked
-                    }
-                } else if (isLocked) {
-                    purpleColor.copy(alpha = 0.5f)  // Dimmed purple when locked and not focused
-                } else {
-                    purpleColor  // Full purple when unlocked and not focused
+                .focusable() // Ensure remains focusable
+                .clickable(enabled = !isLocked) { 
+                    soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                    expanded = !expanded 
                 }
-            ),
-            shape = RoundedCornerShape(12.dp)
+                .wrapContentWidth() // Pill-shaped, not full width
+                .background(
+                    color = if (isFocused && !isMobile) Color.White.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .border(
+                    width = if (isFocused && !isMobile) 2.dp else 1.dp,
+                    color = if (isFocused && !isMobile) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp), // Padding applied here for Box
+            contentAlignment = Alignment.CenterStart
         ) {
             Row(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -131,32 +131,12 @@ fun LibraryDropdown(
                     text = selectedLibrary?.title ?: "Select Library",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isFocused && !isMobile) {
-                        if (isLocked) {
-                            Color.Black.copy(alpha = 0.5f)  // Dimmed black when focused but locked
-                        } else {
-                            Color.Black  // Full black when focused and unlocked
-                        }
-                    } else if (isLocked) {
-                        Color.White.copy(alpha = 0.5f)  // Dimmed white when locked and not focused
-                    } else {
-                        Color.White  // Full white when unlocked and not focused
-                    }
+                    color = if (isLocked) Color.White.copy(alpha = 0.5f) else Color.White
                 )
                 Icon(
                     imageVector = if (expanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
                     contentDescription = if (expanded) "Collapse" else "Expand",
-                    tint = if (isFocused && !isMobile) {
-                        if (isLocked) {
-                            Color.Black.copy(alpha = 0.5f)  // Dimmed black when focused but locked
-                        } else {
-                            Color.Black  // Full black when focused and unlocked
-                        }
-                    } else if (isLocked) {
-                        Color.White.copy(alpha = 0.5f)  // Dimmed white when locked and not focused
-                    } else {
-                        Color.White  // Full white when unlocked and not focused
-                    },
+                    tint = if (isLocked) Color.White.copy(alpha = 0.5f) else Color.White,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -274,6 +254,8 @@ private fun LibraryMenuItem(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isHovered by interactionSource.collectIsHoveredAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
     val purpleColor = Color(0xFF8B5CF6)
     val yellowColor = Color(0xFFF5B800)
 
@@ -307,7 +289,10 @@ private fun LibraryMenuItem(
             .clickable(
                 interactionSource = interactionSource,
                 indication = null
-            ) { onClick() }
+            ) { 
+                soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                onClick() 
+            }
             .focusable(interactionSource = interactionSource)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {

@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
@@ -55,6 +56,8 @@ import com.purestream.data.model.AuthenticationStatus
 import com.purestream.utils.rememberIsMobile
 import com.purestream.ui.theme.NetflixDarkGray
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.lifecycle.Lifecycle
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -120,9 +123,17 @@ fun ConnectPlexScreen(
         // Mobile Layout: OAuth-based login only
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(NetflixDarkGray)
-        ) {
+                            .fillMaxSize()
+                            .background(NetflixDarkGray)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF0F172A), // Dark blue-gray top
+                                        Color(0xFF0D0D0D), // Pure black middle
+                                        Color(0xFF0D0D0D)  // Pure black bottom
+                                    )
+                                )
+                            )        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -165,9 +176,17 @@ fun ConnectPlexScreen(
         // TV Layout: Side-by-side - OAuth button on left, QR code on right
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(NetflixDarkGray)
-        ) {
+                            .fillMaxSize()
+                            .background(NetflixDarkGray)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF0F172A), // Dark blue-gray top
+                                        Color(0xFF0D0D0D), // Pure black middle
+                                        Color(0xFF0D0D0D)  // Pure black bottom
+                                    )
+                                )
+                            )        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -238,12 +257,7 @@ fun OAuthLoginLayout(
     var shouldRequestFocus by remember { mutableStateOf(true) }
 
     // Auto-focus the login button for TV remote navigation
-    // LaunchedEffect for initial composition (cold start)
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(50) // Minimal delay for UI initialization
-        loginButtonFocusRequester.requestFocus()
-    }
-
+    
     // Listen for lifecycle changes to detect when navigating back
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -261,22 +275,25 @@ fun OAuthLoginLayout(
     // Request focus whenever shouldRequestFocus is set to true
     LaunchedEffect(shouldRequestFocus) {
         if (shouldRequestFocus) {
-            kotlinx.coroutines.delay(50) // Minimal delay
-            loginButtonFocusRequester.requestFocus()
+            // Increased delay to ensure UI is fully ready/composed after navigation
+            kotlinx.coroutines.delay(300) 
+            try {
+                loginButtonFocusRequester.requestFocus()
+            } catch (e: Exception) {
+                android.util.Log.w("ConnectPlexScreen", "Failed to request focus: ${e.message}")
+            }
             shouldRequestFocus = false
         }
     }
 
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight()
             .padding(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF2A2A2A)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        shape = RoundedCornerShape(16.dp)
+        color = Color(0xFF1A1C2E).copy(alpha = 0.7f),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
     ) {
         Column(
             modifier = Modifier
@@ -309,17 +326,20 @@ fun OAuthLoginLayout(
             val loginButtonInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
             val isLoginButtonFocused by loginButtonInteractionSource.collectIsFocusedAsState()
 
-            // Mobile: Always yellow/black for Login with Plex
-            // TV: Purple when not focused, yellow when focused
-            val loginBackgroundColor = if (isMobile) {
-                Color(0xFFF5B800)
-            } else {
-                if (isLoginButtonFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+            // Optimized color selection with remember to avoid recalculation on every frame
+            val loginBackgroundColor = remember(isLoginButtonFocused, isMobile) {
+                if (isMobile) {
+                    Color(0xFFF5B800)
+                } else {
+                    if (isLoginButtonFocused) Color(0xFFF5B800) else Color(0xFF8B5CF6)
+                }
             }
-            val loginContentColor = if (isMobile) {
-                Color.Black
-            } else {
-                if (isLoginButtonFocused) Color.Black else Color.White
+            val loginContentColor = remember(isLoginButtonFocused, isMobile) {
+                if (isMobile) {
+                    Color.Black
+                } else {
+                    if (isLoginButtonFocused) Color.Black else Color.White
+                }
             }
 
             Button(
@@ -708,16 +728,14 @@ fun QRCodeAuthSideLayout(
         }
     }
     
-    Card(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .fillMaxHeight()
             .padding(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF2A2A2A)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        shape = RoundedCornerShape(16.dp)
+        color = Color(0xFF1A1C2E).copy(alpha = 0.7f),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
     ) {
         Column(
             modifier = Modifier
@@ -810,14 +828,20 @@ fun QRCodeAuthSideLayout(
                         Spacer(modifier = Modifier.height(24.dp))
                         
                         val qrCodeUrl = "https://plex.tv/link?pin=${pin.code}"
-                        val qrBitmap = generateQRCode(qrCodeUrl)
+                        
+                        // Generate QR code in background to prevent UI lag
+                        val qrBitmap by produceState<Bitmap?>(initialValue = null, qrCodeUrl) {
+                            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                generateQRCode(qrCodeUrl)
+                            }
+                        }
                         
                         if (qrBitmap != null) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 androidx.compose.foundation.Image(
-                                    bitmap = qrBitmap.asImageBitmap(),
+                                    bitmap = qrBitmap!!.asImageBitmap(),
                                     contentDescription = "QR Code",
                                     modifier = Modifier
                                         .size(160.dp)
@@ -826,11 +850,14 @@ fun QRCodeAuthSideLayout(
                                 )
                             }
                         } else {
-                            Text(
-                                text = "Failed to generate QR code",
-                                color = Color(0xFFEF4444),
-                                fontSize = 16.sp
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(160.dp)
+                                    .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(color = Color(0xFFE5A00D))
+                            }
                         }
                     }
                 }
@@ -897,15 +924,19 @@ fun QRCodeAuthSideLayout(
 fun generateQRCode(text: String): Bitmap? {
     return try {
         val writer = QRCodeWriter()
-        val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, 512, 512)
+        // Reduced resolution from 512 to 256 for better performance
+        val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, 256, 256)
         val width = bitMatrix.width
         val height = bitMatrix.height
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-        for (x in 0 until width) {
-            for (y in 0 until height) {
-                bitmap.setPixel(x, y, if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        val pixels = IntArray(width * height)
+        for (y in 0 until height) {
+            val offset = y * width
+            for (x in 0 until width) {
+                pixels[offset + x] = if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
             }
         }
+        bitmap.setPixels(pixels, 0, width, 0, 0, width, height)
         bitmap
     } catch (e: Exception) {
         null

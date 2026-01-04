@@ -12,8 +12,7 @@ import com.purestream.data.database.dao.*
 import com.purestream.data.database.entities.CacheMetadataEntity
 import com.purestream.data.cache.CacheConfig
 import com.purestream.data.cache.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.ByteArrayInputStream
@@ -104,7 +103,8 @@ class PlexRepository(private val context: Context) {
         return movies.map { movie ->
             movie.copy(
                 thumbUrl = fixUriPackage(movie.thumbUrl),
-                artUrl = fixUriPackage(movie.artUrl)
+                artUrl = fixUriPackage(movie.artUrl),
+                logoUrl = fixUriPackage(movie.logoUrl)
             )
         }
     }
@@ -367,73 +367,60 @@ class PlexRepository(private val context: Context) {
                                 }
                             }
 
-                            // Test and store both local and remote connections
-                            val workingConnections = mutableListOf<ServerConnectionInfo>()
-
-                            // Try local connections first, then remote
+                            // Test and store both local and remote connections in parallel
                             val connectionsToTry = localConnections + remoteConnections
+                            val workingConnections = coroutineScope {
+                                connectionsToTry.map { server ->
+                                    async {
+                                        val serverUrl = if (server.host.startsWith("http")) {
+                                            server.host
+                                        } else {
+                                            val protocol = if (server.host.contains(".app") || server.port == 443) "https" else "http"
+                                            "$protocol://${server.host}:${server.port}"
+                                        }
 
-                            for (server in connectionsToTry) {
-                                val serverUrl = if (server.host.startsWith("http")) {
-                                    server.host
-                                } else {
-                                    // Determine protocol based on server characteristics
-                                    val protocol = if (server.host.contains(".app") || server.port == 443) {
-                                        "https"
-                                    } else {
-                                        "http"
+                                        val isLocal = server.host.startsWith("192.168.") ||
+                                                     server.host.startsWith("10.") ||
+                                                     server.host.startsWith("172.") ||
+                                                     server.host == "localhost" ||
+                                                     server.host == "127.0.0.1"
+
+                                        val testToken = if (server.accessToken.isNotBlank()) server.accessToken else token
+
+                                        try {
+                                            Log.d("PlexRepository", "Testing connection: $serverUrl (${if (isLocal) "local" else "remote"})")
+                                            val testApiService = ApiClient.createServerApiService(serverUrl, isLocal)
+                                            val testResponse = testApiService.getLibraries(testToken)
+                                            
+                                            if (testResponse?.isSuccessful == true) {
+                                                Log.d("PlexRepository", "Connection successful: $serverUrl")
+                                                ServerConnectionInfo(
+                                                    serverUrl = serverUrl,
+                                                    token = testToken,
+                                                    isLocal = isLocal,
+                                                    apiService = testApiService
+                                                )
+                                            } else {
+                                                Log.w("PlexRepository", "Connection failed ($serverUrl): ${testResponse?.code()}")
+                                                null
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.w("PlexRepository", "Connection error ($serverUrl): ${e.message}")
+                                            null
+                                        }
                                     }
-                                    "$protocol://${server.host}:${server.port}"
-                                }
-
-                                val isLocal = server.host.startsWith("192.168.") ||
-                                             server.host.startsWith("10.") ||
-                                             server.host.startsWith("172.") ||
-                                             server.host == "localhost" ||
-                                             server.host == "127.0.0.1"
-
-                                Log.d("PlexRepository", "Testing connection to: $serverUrl (${if (isLocal) "local" else "remote"})")
-
-                                // Test the connection using server-specific token if available
-                                val testToken = if (server.accessToken.isNotBlank()) {
-                                    Log.d("PlexRepository", "Using server-specific access token for $serverUrl")
-                                    server.accessToken
-                                } else {
-                                    Log.d("PlexRepository", "Using general Plex token for $serverUrl")
-                                    token
-                                }
-
-                                try {
-                                    val testApiService = ApiClient.createServerApiService(serverUrl, isLocal)
-                                    val testResponse = testApiService.getLibraries(testToken)
-                                    Log.d("PlexRepository", "Test connection response for $serverUrl: ${testResponse?.code()}")
-
-                                    if (testResponse?.isSuccessful == true) {
-                                        Log.d("PlexRepository", "Server connection test successful for: $serverUrl")
-                                        val connectionInfo = ServerConnectionInfo(
-                                            serverUrl = serverUrl,
-                                            token = testToken,
-                                            isLocal = isLocal,
-                                            apiService = testApiService
-                                        )
-                                        workingConnections.add(connectionInfo)
-                                    } else {
-                                        Log.w("PlexRepository", "Server connection failed for $serverUrl: ${testResponse?.code()}")
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w("PlexRepository", "Exception testing connection to $serverUrl: ${e.message}")
-                                }
+                                }.awaitAll().filterNotNull()
                             }
 
                             // Store primary and fallback connections
                             if (workingConnections.isNotEmpty()) {
                                 // Prefer local connections as primary
-                                val localConnections = workingConnections.filter { it.isLocal }
-                                val remoteConnections = workingConnections.filter { !it.isLocal }
+                                val workingLocal = workingConnections.filter { it.isLocal }
+                                val workingRemote = workingConnections.filter { !it.isLocal }
 
-                                primaryConnection = localConnections.firstOrNull() ?: remoteConnections.first()
-                                fallbackConnection = if (localConnections.isNotEmpty() && remoteConnections.isNotEmpty()) {
-                                    remoteConnections.first()
+                                primaryConnection = workingLocal.firstOrNull() ?: workingRemote.first()
+                                fallbackConnection = if (workingLocal.isNotEmpty() && workingRemote.isNotEmpty()) {
+                                    workingRemote.first()
                                 } else null
 
                                 // Set up primary connection
@@ -576,18 +563,15 @@ class PlexRepository(private val context: Context) {
         forceRefresh: Boolean = false
     ): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
-            // CRITICAL FIX: Try to restore connection FIRST before checking demo mode
-            // This ensures real Plex connections are restored from settings
-            if (!hasValidConnection()) {
-                ensureConnection()
+            // Check if libraryId indicates demo content regardless of token state
+            if (libraryId.startsWith("demo_")) {
+                Log.d(TAG, "Demo library ID detected ($libraryId): Returning demo movies with fixed URIs")
+                return@withContext Result.success(fixDemoUris(com.purestream.data.demo.DemoData.DEMO_MOVIES))
             }
 
-            // NOW check for Demo Mode after attempting to restore connection
-            val tokenToCheck = currentToken ?: authRepository.getAuthToken()
-            if (com.purestream.data.demo.DemoData.isDemoToken(tokenToCheck)) {
-                Log.d(TAG, "Demo Mode: Returning demo movies with fixed URIs for package: ${context.packageName}")
-                // Apply URI fix to handle debug vs release builds
-                return@withContext Result.success(fixDemoUris(com.purestream.data.demo.DemoData.DEMO_MOVIES))
+            // CRITICAL FIX: Try to restore connection FIRST before checking demo mode
+            if (!hasValidConnection()) {
+                ensureConnection()
             }
 
             // Check cache metadata if profileId is provided
@@ -625,9 +609,13 @@ class PlexRepository(private val context: Context) {
                 val rawMovies = response.body()?.mediaContainer?.metadata ?: emptyList()
                 // Process thumbnail URLs to include server URL and token
                 val moviesWithFullUrls = rawMovies.map { movie ->
+                    // Extract logo URL from images list
+                    val logoUrl = movie.images?.find { it.type == "clearLogo" }?.url
+                    
                     movie.copy(
                         thumbUrl = buildImageUrl(movie.thumbUrl),
                         artUrl = buildImageUrl(movie.artUrl),
+                        logoUrl = buildImageUrl(logoUrl),
                         profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN
                     )
                 }
@@ -698,6 +686,12 @@ class PlexRepository(private val context: Context) {
         forceRefresh: Boolean = false
     ): Result<List<TvShow>> = withContext(Dispatchers.IO) {
         try {
+            // Check if libraryId indicates demo content regardless of token state
+            if (libraryId.startsWith("demo_")) {
+                Log.d(TAG, "Demo library ID detected ($libraryId): Returning demo TV shows with fixed URIs")
+                return@withContext Result.success(fixDemoTvUris(com.purestream.data.demo.DemoData.DEMO_TV_SHOWS))
+            }
+
             // CRITICAL FIX: Try to restore connection FIRST before checking demo mode
             if (!hasValidConnection()) {
                 ensureConnection()
@@ -739,9 +733,13 @@ class PlexRepository(private val context: Context) {
                 val rawShows = response.body()?.mediaContainer?.metadata ?: emptyList()
                 // Process thumbnail URLs to include server URL and token
                 val showsWithFullUrls = rawShows.map { show ->
+                    // Extract logo URL from images list
+                    val logoUrl = show.images?.find { it.type == "clearLogo" }?.url
+                    
                     show.copy(
                         thumbUrl = buildImageUrl(show.thumbUrl),
                         artUrl = buildImageUrl(show.artUrl),
+                        logoUrl = buildImageUrl(logoUrl),
                         profanityLevel = show.profanityLevel ?: ProfanityLevel.UNKNOWN
                     )
                 }
@@ -808,6 +806,19 @@ class PlexRepository(private val context: Context) {
 
     suspend fun getSeasons(showId: String): Result<List<Season>> = withContext(Dispatchers.IO) {
         try {
+            // Check for demo mode - demo TV shows don't have seasons/episodes
+            if (showId.startsWith("demo_")) {
+                Log.d(TAG, "Demo show ID detected ($showId): Returning empty seasons list")
+                return@withContext Result.success(emptyList())
+            }
+
+            // Check if currently in demo mode
+            val tokenToCheck = currentToken ?: authRepository.getAuthToken()
+            if (com.purestream.data.demo.DemoData.isDemoToken(tokenToCheck)) {
+                Log.d(TAG, "Demo Mode active: Returning empty seasons list for show $showId")
+                return@withContext Result.success(emptyList())
+            }
+
             val token = currentToken ?: return@withContext Result.failure(Exception("No token available"))
             val service = serverApiService ?: return@withContext Result.failure(Exception("No server connection"))
 
@@ -831,6 +842,19 @@ class PlexRepository(private val context: Context) {
 
     suspend fun getEpisodes(seasonId: String): Result<List<Episode>> = withContext(Dispatchers.IO) {
         try {
+            // Check for demo mode - demo TV shows don't have seasons/episodes
+            if (seasonId.startsWith("demo_")) {
+                Log.d(TAG, "Demo season ID detected ($seasonId): Returning empty episodes list")
+                return@withContext Result.success(emptyList())
+            }
+
+            // Check if currently in demo mode
+            val tokenToCheck = currentToken ?: authRepository.getAuthToken()
+            if (com.purestream.data.demo.DemoData.isDemoToken(tokenToCheck)) {
+                Log.d(TAG, "Demo Mode active: Returning empty episodes list for season $seasonId")
+                return@withContext Result.success(emptyList())
+            }
+
             val token = currentToken ?: return@withContext Result.failure(Exception("No token available"))
             val service = serverApiService ?: return@withContext Result.failure(Exception("No server connection"))
 
@@ -1037,9 +1061,14 @@ class PlexRepository(private val context: Context) {
 
                 if (movie != null) {
                     Log.d("PlexRepository", "Movie found: ${movie.title}")
+                    
+                    // Extract logo URL from images list
+                    val logoUrl = movie.images?.find { it.type == "clearLogo" }?.url
+                    
                     val movieWithFullUrls = movie.copy(
                         thumbUrl = buildImageUrl(movie.thumbUrl),
                         artUrl = buildImageUrl(movie.artUrl),
+                        logoUrl = buildImageUrl(logoUrl),
                         profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN
                     )
                     Result.success(movieWithFullUrls)
@@ -1116,15 +1145,13 @@ class PlexRepository(private val context: Context) {
             Log.d("PlexRepository", "Movie key: ${movie.key}")
             Log.d("PlexRepository", "Movie has ${movie.media?.size ?: 0} media items")
 
-            // Try to get detailed movie info first to ensure we have media parts
+            // Handshake: Briefly ping server to wake it up/trigger session
             try {
-                val response = serverApiService?.getItemDetails(movie.ratingKey, token)
-                if (response?.isSuccessful == true) {
-                    Log.d("PlexRepository", "Successfully fetched detailed movie info for streaming")
-                    // The response should contain media parts, but for now we'll use the fallback approach
+                withTimeout(2000) {
+                    serverApiService?.getItemDetails(movie.ratingKey, token)
                 }
             } catch (e: Exception) {
-                Log.w("PlexRepository", "Failed to get detailed movie info: ${e.message}")
+                // Non-critical
             }
 
             // Check if movie has media parts with streaming keys
@@ -1430,15 +1457,32 @@ class PlexRepository(private val context: Context) {
 
     suspend fun getMovieById(movieId: String): Result<Movie?> = withContext(Dispatchers.IO) {
         try {
+            // Check for Demo Mode
+            val tokenToCheck = currentToken ?: authRepository.getAuthToken()
+            if (com.purestream.data.demo.DemoData.isDemoToken(tokenToCheck)) {
+                Log.d("PlexRepository", "Demo Mode: Fetching demo movie details for ID: $movieId")
+                val demoMovie = com.purestream.data.demo.DemoData.DEMO_MOVIES.find { it.ratingKey == movieId }
+                return@withContext if (demoMovie != null) {
+                    val fixedMovie = fixDemoUris(listOf(demoMovie)).first()
+                    Result.success(fixedMovie)
+                } else {
+                    Result.failure(Exception("Demo movie not found with ID: $movieId"))
+                }
+            }
+
             val token = currentToken ?: return@withContext Result.failure(Exception("No token available"))
             val service = serverApiService ?: return@withContext Result.failure(Exception("No server connection"))
 
             val response = service.getMovieDetails(movieId, token)
             if (response.isSuccessful) {
                 val movie = response.body()?.mediaContainer?.metadata?.firstOrNull()?.let { movie ->
+                    // Extract logo URL from images list
+                    val logoUrl = movie.images?.find { it.type == "clearLogo" }?.url
+                    
                     movie.copy(
                         thumbUrl = buildImageUrl(movie.thumbUrl),
-                        artUrl = buildImageUrl(movie.artUrl)
+                        artUrl = buildImageUrl(movie.artUrl),
+                        logoUrl = buildImageUrl(logoUrl)
                     )
                 }
                 Result.success(movie)
@@ -1468,9 +1512,13 @@ class PlexRepository(private val context: Context) {
             val response = service.getTvShowDetails(showId, token)
             if (response.isSuccessful) {
                 val tvShow = response.body()?.mediaContainer?.metadata?.firstOrNull()?.let { show ->
+                    // Extract logo URL from images list
+                    val logoUrl = show.images?.find { it.type == "clearLogo" }?.url
+                    
                     show.copy(
                         thumbUrl = buildImageUrl(show.thumbUrl),
-                        artUrl = buildImageUrl(show.artUrl)
+                        artUrl = buildImageUrl(show.artUrl),
+                        logoUrl = buildImageUrl(logoUrl)
                     )
                 }
                 Result.success(tvShow)
@@ -1661,6 +1709,7 @@ class PlexRepository(private val context: Context) {
                                 type = ContentType.MOVIE,
                                 thumbUrl = movie.thumbUrl,
                                 artUrl = movie.artUrl,
+                                logoUrl = movie.logoUrl,
                                 summary = movie.summary,
                                 year = movie.year,
                                 rating = movie.rating,
@@ -1680,6 +1729,7 @@ class PlexRepository(private val context: Context) {
                                 type = ContentType.MOVIE,
                                 thumbUrl = movie.thumbUrl,
                                 artUrl = movie.artUrl,
+                                logoUrl = movie.logoUrl,
                                 summary = movie.summary,
                                 year = movie.year,
                                 rating = movie.rating,
@@ -1700,6 +1750,7 @@ class PlexRepository(private val context: Context) {
                                 type = ContentType.MOVIE,
                                 thumbUrl = fixedFeatured.thumbUrl,
                                 artUrl = fixedFeatured.artUrl,
+                                logoUrl = fixedFeatured.logoUrl,
                                 summary = fixedFeatured.summary,
                                 year = fixedFeatured.year,
                                 rating = fixedFeatured.rating,
@@ -1715,6 +1766,7 @@ class PlexRepository(private val context: Context) {
                                 type = ContentType.MOVIE,
                                 thumbUrl = movie.thumbUrl,
                                 artUrl = movie.artUrl,
+                                logoUrl = movie.logoUrl,
                                 summary = movie.summary,
                                 year = movie.year,
                                 rating = movie.rating,
@@ -1751,231 +1803,149 @@ class PlexRepository(private val context: Context) {
                 android.util.Log.d("PlexRepository", "  ... and ${orderedCollections.size - 10} more enabled collections")
             }
 
-            for (collection in orderedCollections) {
-                android.util.Log.d("PlexRepository", "Processing collection: ${collection.title} (${collection.id})")
-                when (collection.id) {
-                    "trending" -> {
-                        // Trending Now - Newest movies
-                        getTrendingNow(selectedLibraries).getOrNull()?.let { movies ->
-                            if (movies.isNotEmpty()) {
-                                val contentItems = movies.map { movie ->
-                                    // Prepend server URL and add token for authentication
-                                    val token = currentToken
-                                    val fullThumbUrl = movie.thumbUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
+            // Fetch all sections in parallel
+            val sectionsList = coroutineScope {
+                orderedCollections.map { collection ->
+                    async {
+                        android.util.Log.d("PlexRepository", "Processing collection in parallel: ${collection.title} (${collection.id})")
+                        when (collection.id) {
+                            "trending" -> {
+                                // Trending Now - Newest movies
+                                getTrendingNow(selectedLibraries).getOrNull()?.let { movies ->
+                                    if (movies.isNotEmpty()) {
+                                        val contentItems = movies.map { movie ->
+                                            val token = currentToken
+                                            val fullThumbUrl = movie.thumbUrl?.let { thumbPath ->
+                                                if (thumbPath.startsWith("http")) {
+                                                    if (token != null && !thumbPath.contains("X-Plex-Token")) "$thumbPath?X-Plex-Token=$token" else thumbPath
+                                                } else if (token != null) "$currentServerUrl$thumbPath?X-Plex-Token=$token" else "$currentServerUrl$thumbPath"
                                             }
-                                        }
-                                    }
-                                    val fullArtUrl = movie.artUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
+                                            val fullArtUrl = movie.artUrl?.let { artPath ->
+                                                if (artPath.startsWith("http")) {
+                                                    if (token != null && !artPath.contains("X-Plex-Token")) "$artPath?X-Plex-Token=$token" else artPath
+                                                } else if (token != null) "$currentServerUrl$artPath?X-Plex-Token=$token" else "$currentServerUrl$artPath"
                                             }
-                                        }
-                                    }
 
-                                    ContentItem(
-                                        id = movie.ratingKey,
-                                        title = movie.title,
-                                        type = ContentType.MOVIE,
-                                        thumbUrl = fullThumbUrl,
-                                        artUrl = fullArtUrl,
-                                        summary = movie.summary,
-                                        year = movie.year,
-                                        rating = movie.rating,
-                                        duration = movie.duration,
-                                        contentRating = movie.contentRating,
-                                        profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
-                                        hasSubtitles = movie.hasSubtitles
-                                    )
-                                }
-                                sections.add(ContentSection("Trending Now", contentItems))
-                            }
-                        }
-                    }
-                    "popular" -> {
-                        // Popular Movies - On Deck
-                        getPopularMovies(selectedLibraries).getOrNull()?.let { movies ->
-                            if (movies.isNotEmpty()) {
-                                val contentItems = movies.map { movie ->
-                                    // Prepend server URL and add token for authentication
-                                    val token = currentToken
-                                    val fullThumbUrl = movie.thumbUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
-                                            }
+                                            ContentItem(
+                                                id = movie.ratingKey,
+                                                title = movie.title,
+                                                type = ContentType.MOVIE,
+                                                thumbUrl = fullThumbUrl,
+                                                artUrl = fullArtUrl,
+                                                logoUrl = buildImageUrl(movie.images?.find { img -> img.type == "clearLogo" }?.url),
+                                                summary = movie.summary,
+                                                year = movie.year,
+                                                rating = movie.rating,
+                                                duration = movie.duration,
+                                                contentRating = movie.contentRating,
+                                                profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
+                                                hasSubtitles = movie.hasSubtitles
+                                            )
                                         }
-                                    }
-                                    val fullArtUrl = movie.artUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
-                                            }
-                                        }
-                                    }
-
-                                    ContentItem(
-                                        id = movie.ratingKey,
-                                        title = movie.title,
-                                        type = ContentType.MOVIE,
-                                        thumbUrl = fullThumbUrl,
-                                        artUrl = fullArtUrl,
-                                        summary = movie.summary,
-                                        year = movie.year,
-                                        rating = movie.rating,
-                                        duration = movie.duration,
-                                        contentRating = movie.contentRating,
-                                        profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
-                                        hasSubtitles = movie.hasSubtitles
-                                    )
-                                }
-                                sections.add(ContentSection("Popular Movies", contentItems))
-                            }
-                        }
-                    }
-                    "recommended" -> {
-                        // Recommended for You - Recently Added (desc)
-                        getRecommendedMovies(selectedLibraries).getOrNull()?.let { movies ->
-                            if (movies.isNotEmpty()) {
-                                val contentItems = movies.map { movie ->
-                                    // Prepend server URL and add token for authentication
-                                    val token = currentToken
-                                    val fullThumbUrl = movie.thumbUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
-                                            }
-                                        }
-                                    }
-                                    val fullArtUrl = movie.artUrl?.let {
-                                        if (it.startsWith("http")) {
-                                            if (token != null && !it.contains("X-Plex-Token")) {
-                                                "$it?X-Plex-Token=$token"
-                                            } else it
-                                        } else {
-                                            if (token != null) {
-                                                "$currentServerUrl$it?X-Plex-Token=$token"
-                                            } else {
-                                                "$currentServerUrl$it"
-                                            }
-                                        }
-                                    }
-
-                                    ContentItem(
-                                        id = movie.ratingKey,
-                                        title = movie.title,
-                                        type = ContentType.MOVIE,
-                                        thumbUrl = fullThumbUrl,
-                                        artUrl = fullArtUrl,
-                                        summary = movie.summary,
-                                        year = movie.year,
-                                        rating = movie.rating,
-                                        duration = movie.duration,
-                                        contentRating = movie.contentRating,
-                                        profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
-                                        hasSubtitles = movie.hasSubtitles
-                                    )
-                                }
-                                sections.add(ContentSection("Recommended for You", contentItems))
-                            }
-                        }
-                    }
-                    else -> {
-                        // Handle Plex and Gemini collections
-                        android.util.Log.d("PlexRepository", "  Handling 'else' branch for: ${collection.title}")
-                        android.util.Log.d("PlexRepository", "    Type: ${collection.type}")
-                        android.util.Log.d("PlexRepository", "    Type is PLEX: ${collection.type == CollectionType.PLEX}")
-                        android.util.Log.d("PlexRepository", "    Type is GEMINI: ${collection.type == CollectionType.GEMINI}")
-                        android.util.Log.d("PlexRepository", "    ID starts with 'plex_': ${collection.id.startsWith("plex_")}")
-                        android.util.Log.d("PlexRepository", "    ID starts with 'gemini_': ${collection.id.startsWith("gemini_")}")
-
-                        when (collection.type) {
-                            CollectionType.PLEX -> {
-                                if (collection.id.startsWith("plex_")) {
-                                    android.util.Log.d("PlexRepository", "    Fetching Plex collection items for: ${collection.title}")
-                                    val itemsResult = getPlexCollectionItems(collection, selectedLibraries)
-
-                                    itemsResult.fold(
-                                        onSuccess = { items ->
-                                            android.util.Log.d("PlexRepository", "    Got ${items.size} items from Plex collection")
-                                            if (items.isNotEmpty()) {
-                                                sections.add(ContentSection(collection.title, items))
-                                                android.util.Log.d("PlexRepository", "    ✓ ADDED section: ${collection.title} with ${items.size} items")
-                                            } else {
-                                                android.util.Log.w("PlexRepository", "    ✗ SKIPPED section (empty): ${collection.title}")
-                                            }
-                                        },
-                                        onFailure = { error ->
-                                            android.util.Log.e("PlexRepository", "    ✗ FAILED to fetch items: ${error.message}")
-                                        }
-                                    )
-                                } else {
-                                    android.util.Log.w("PlexRepository", "    ✗ SKIPPED: Not a valid Plex collection ID format")
+                                        ContentSection("Trending Now", contentItems)
+                                    } else null
                                 }
                             }
-                            CollectionType.GEMINI -> {
-                                if (collection.id.startsWith("gemini_")) {
-                                    android.util.Log.d("PlexRepository", "    Fetching Gemini collection items for: ${collection.title}")
-                                    val itemsResult = getGeminiCollectionItems(collection, profileId)
-
-                                    itemsResult.fold(
-                                        onSuccess = { items ->
-                                            android.util.Log.d("PlexRepository", "    Got ${items.size} items from Gemini collection")
-                                            if (items.isNotEmpty()) {
-                                                sections.add(ContentSection(collection.title, items))
-                                                android.util.Log.d("PlexRepository", "    ✓ ADDED section: ${collection.title} with ${items.size} items")
-                                            } else {
-                                                android.util.Log.w("PlexRepository", "    ✗ SKIPPED section (empty): ${collection.title}")
+                            "popular" -> {
+                                // Popular Movies - On Deck
+                                getPopularMovies(selectedLibraries).getOrNull()?.let { movies ->
+                                    if (movies.isNotEmpty()) {
+                                        val contentItems = movies.map { movie ->
+                                            val token = currentToken
+                                            val fullThumbUrl = movie.thumbUrl?.let { thumbPath ->
+                                                if (thumbPath.startsWith("http")) {
+                                                    if (token != null && !thumbPath.contains("X-Plex-Token")) "$thumbPath?X-Plex-Token=$token" else thumbPath
+                                                } else if (token != null) "$currentServerUrl$thumbPath?X-Plex-Token=$token" else "$currentServerUrl$thumbPath"
                                             }
-                                        },
-                                        onFailure = { error ->
-                                            android.util.Log.e("PlexRepository", "    ✗ FAILED to fetch Gemini items: ${error.message}")
+                                            val fullArtUrl = movie.artUrl?.let { artPath ->
+                                                if (artPath.startsWith("http")) {
+                                                    if (token != null && !artPath.contains("X-Plex-Token")) "$artPath?X-Plex-Token=$token" else artPath
+                                                } else if (token != null) "$currentServerUrl$artPath?X-Plex-Token=$token" else "$currentServerUrl$artPath"
+                                            }
+
+                                            ContentItem(
+                                                id = movie.ratingKey,
+                                                title = movie.title,
+                                                type = ContentType.MOVIE,
+                                                thumbUrl = fullThumbUrl,
+                                                artUrl = fullArtUrl,
+                                                logoUrl = buildImageUrl(movie.images?.find { img -> img.type == "clearLogo" }?.url),
+                                                summary = movie.summary,
+                                                year = movie.year,
+                                                rating = movie.rating,
+                                                duration = movie.duration,
+                                                contentRating = movie.contentRating,
+                                                profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
+                                                hasSubtitles = movie.hasSubtitles
+                                            )
                                         }
-                                    )
-                                } else {
-                                    android.util.Log.w("PlexRepository", "    ✗ SKIPPED: Not a valid Gemini collection ID format")
+                                        ContentSection("Popular Movies", contentItems)
+                                    } else null
+                                }
+                            }
+                            "recommended" -> {
+                                // Recommended for You - Recently Added (desc)
+                                getRecommendedMovies(selectedLibraries).getOrNull()?.let { movies ->
+                                    if (movies.isNotEmpty()) {
+                                        val contentItems = movies.map { movie ->
+                                            val token = currentToken
+                                            val fullThumbUrl = movie.thumbUrl?.let { thumbPath ->
+                                                if (thumbPath.startsWith("http")) {
+                                                    if (token != null && !thumbPath.contains("X-Plex-Token")) "$thumbPath?X-Plex-Token=$token" else thumbPath
+                                                } else if (token != null) "$currentServerUrl$thumbPath?X-Plex-Token=$token" else "$currentServerUrl$thumbPath"
+                                            }
+                                            val fullArtUrl = movie.artUrl?.let { artPath ->
+                                                if (artPath.startsWith("http")) {
+                                                    if (token != null && !artPath.contains("X-Plex-Token")) "$artPath?X-Plex-Token=$token" else artPath
+                                                } else if (token != null) "$currentServerUrl$artPath?X-Plex-Token=$token" else "$currentServerUrl$artPath"
+                                            }
+
+                                            ContentItem(
+                                                id = movie.ratingKey,
+                                                title = movie.title,
+                                                type = ContentType.MOVIE,
+                                                thumbUrl = fullThumbUrl,
+                                                artUrl = fullArtUrl,
+                                                logoUrl = buildImageUrl(movie.images?.find { img -> img.type == "clearLogo" }?.url),
+                                                summary = movie.summary,
+                                                year = movie.year,
+                                                rating = movie.rating,
+                                                duration = movie.duration,
+                                                contentRating = movie.contentRating,
+                                                profanityLevel = movie.profanityLevel ?: ProfanityLevel.UNKNOWN,
+                                                hasSubtitles = movie.hasSubtitles
+                                            )
+                                        }
+                                        ContentSection("Recommended for You", contentItems)
+                                    } else null
                                 }
                             }
                             else -> {
-                                android.util.Log.w("PlexRepository", "    ✗ SKIPPED: Unknown collection type")
+                                // Handle Plex and Gemini collections
+                                when (collection.type) {
+                                    CollectionType.PLEX -> {
+                                        if (collection.id.startsWith("plex_")) {
+                                            getPlexCollectionItems(collection, selectedLibraries).getOrNull()?.let { items ->
+                                                if (items.isNotEmpty()) ContentSection(collection.title, items) else null
+                                            }
+                                        } else null
+                                    }
+                                    CollectionType.GEMINI -> {
+                                        if (collection.id.startsWith("gemini_")) {
+                                            getGeminiCollectionItems(collection, profileId).getOrNull()?.let { items ->
+                                                if (items.isNotEmpty()) ContentSection(collection.title, items) else null
+                                            }
+                                        } else null
+                                    }
+                                    else -> null
+                                }
                             }
                         }
                     }
                 }
-            }
+            }.awaitAll().filterNotNull()
+
+            sections.addAll(sectionsList)
 
             android.util.Log.d("PlexRepository", "=== FINAL SECTIONS COUNT: ${sections.size} ===")
             sections.forEachIndexed { index, section ->

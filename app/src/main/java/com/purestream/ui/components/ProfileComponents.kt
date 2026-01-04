@@ -28,9 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.hoverable
 import com.purestream.data.model.*
 import com.purestream.ui.theme.tvIconFocusIndicator
+import com.purestream.ui.theme.tvCardFocusIndicator
 import com.purestream.ui.theme.animatedProfileBorder
 import com.purestream.ui.theme.animatedPosterBorder
 import com.purestream.utils.rememberIsMobile
@@ -61,48 +63,39 @@ fun AvatarImageSelectionButton(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val avatarResourceId = try {
-        context.resources.getIdentifier(
-            avatarImage, 
-            "drawable", 
-            context.packageName
-        )
-    } catch (e: Exception) {
-        0
+    val packageName = context.packageName
+    val avatarResourceId = remember(avatarImage, packageName) {
+        try {
+            context.resources.getIdentifier(
+                avatarImage, 
+                "drawable", 
+                packageName
+            )
+        } catch (e: Exception) {
+            0
+        }
     }
     
-    var isFocused by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     
     Box(
         modifier = modifier
             .size(64.dp)
-            .hoverable(interactionSource)
             .focusable(interactionSource = interactionSource)
-            .onFocusChanged { focusState: FocusState ->
-                isFocused = focusState.isFocused
-            }
-            .tvIconFocusIndicator()
-            .clickable { onClick() }
-            .then(
-                if (isSelected) {
-                    Modifier.border(
-                        width = 3.dp,
-                        color = Color(0xFFEF4444),
-                        shape = CircleShape
-                    )
-                } else {
-                    Modifier
-                        .animatedProfileBorder(
-                            borderWidth = 2.dp,
-                            interactionSource = interactionSource
-                        )
-                        .border(
-                            width = if (isFocused) 0.dp else 1.dp,
-                            color = if (isFocused) Color.Transparent else Color.White.copy(alpha = 0.3f),
-                            shape = CircleShape
-                        )
-                }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null, 
+                onClick = onClick
+            )
+            .border(
+                width = 3.dp,
+                color = when {
+                    isSelected -> Color(0xFF8B5CF6)
+                    isFocused -> Color(0xFF8B5CF6).copy(alpha = 0.8f)
+                    else -> Color.White.copy(alpha = 0.1f)
+                },
+                shape = CircleShape
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -111,7 +104,7 @@ fun AvatarImageSelectionButton(
                 painter = painterResource(id = avatarResourceId),
                 contentDescription = "Avatar Option: $avatarImage",
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(54.dp) 
                     .clip(CircleShape),
                 contentScale = ContentScale.Crop
             )
@@ -122,9 +115,9 @@ fun AvatarImageSelectionButton(
         if (isSelected) {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(54.dp)
                     .background(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                        color = Color(0xFF8B5CF6).copy(alpha = 0.3f),
                         shape = CircleShape
                     ),
                 contentAlignment = Alignment.Center
@@ -201,14 +194,16 @@ fun ProfileTypeButton(
     modifier: Modifier = Modifier
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
     Card(
         modifier = modifier
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(12.dp),
-                interactionSource = interactionSource
+            .tvCardFocusIndicator() // Handles scale
+            .border(
+                width = 2.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
             )
-            .tvIconFocusIndicator()
             .clickable(enabled = !isLocked || isPremium) {
                 if (!isLocked || isPremium) onClick()
             },
@@ -255,15 +250,17 @@ fun FilterLevelButton(
 ) {
     val isMobile = rememberIsMobile()
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(12.dp),
-                interactionSource = interactionSource
+            .tvCardFocusIndicator() // Handles scale
+            .border(
+                width = 2.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
             )
-            .tvIconFocusIndicator()
             .clickable(enabled = !isLocked || isPremium) { 
                 if (!isLocked || isPremium) onClick() 
             },
@@ -384,16 +381,22 @@ fun LibrarySelectionItem(
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .animatedPosterBorder(
-                shape = RoundedCornerShape(12.dp),
-                interactionSource = interactionSource
+            .tvCardFocusIndicator() // Handles scale and focus state
+            .border(
+                width = 2.dp,
+                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                shape = RoundedCornerShape(12.dp)
             )
-            .tvIconFocusIndicator()
-            .clickable { onClick() },
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
         colors = CardDefaults.cardColors(
             containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
                           else MaterialTheme.colorScheme.surfaceVariant

@@ -108,7 +108,6 @@
 -keep class com.purestream.data.database.dao.** { *; }
 
 # Keep Room generated classes
--keep class com.purestream.data.database.AppDatabase_Impl { *; }
 -keep class * extends androidx.room.RoomDatabase { *; }
 -keep @androidx.room.Entity class * { *; }
 -keep class * extends androidx.room.Dao { *; }
@@ -124,6 +123,12 @@
 
 # Keep Manager classes (CRITICAL for singletons)
 -keep class com.purestream.data.manager.** { *; }
+
+# Keep Service classes (AI curation, etc)
+-keep class com.purestream.data.service.** { *; }
+
+# Keep Cache helper classes
+-keep class com.purestream.data.cache.** { *; }
 
 # Keep Navigation destinations
 -keep class com.purestream.navigation.** { *; }
@@ -158,13 +163,18 @@
 
 # Compose Navigation
 -keep class androidx.navigation.** { *; }
--keepnames class androidx.navigation.fragment.NavHostFragment
 
 # Coil image loading
 -keep class coil.** { *; }
 -keep interface coil.** { *; }
 -keep enum coil.** { *; }
 -dontwarn coil.**
+
+# AndroidX Palette API
+-keep class androidx.palette.graphics.** { *; }
+
+# AndroidX WebKit (used for Plex in-app auth)
+-keep class androidx.webkit.** { *; }
 
 # ZXing QR code library
 -keep class com.google.zxing.** { *; }

@@ -92,10 +92,17 @@ fun VLCMediaPlayer(
                 Log.w("VLCMediaPlayer", "Error cleaning up previous instances: ${e.message}")
             }
             
-            // Create LibVLC with absolutely minimal configuration for Android TV
+            // Create LibVLC with optimized configuration for remote networks
             val vlc = try {
-                Log.d("VLCMediaPlayer", "Attempting LibVLC creation with no options")
-                LibVLC(context)
+                Log.d("VLCMediaPlayer", "Creating LibVLC with remote network optimizations")
+                val options = arrayListOf<String>(
+                    "--network-caching=800",  // Faster start than 1.5s, still stable for remote
+                    "--http-reconnect",       // Automatically reconnect if connection drops
+                    "--drop-late-frames",     // Prevent video/audio desync on slow connections
+                    "--skip-frames",          // Ensure playback continues even if decoding is slow
+                    "-vvv"                    // Verbose logging for troubleshooting
+                )
+                LibVLC(context, options)
             } catch (e: Exception) {
                 Log.e("VLCMediaPlayer", "Failed to create LibVLC instance: ${e.message}", e)
                 playerError = "Failed to initialize LibVLC: ${e.message}"
@@ -130,7 +137,10 @@ fun VLCMediaPlayer(
 
                         if (isSeekRelated) {
                             isSeekBuffering = bufferingPercent < 100f
-                            Log.d("VLCMediaPlayer", "Seek buffering: $isSeekBuffering")
+                            // Also clear main loading indicator when seek buffering completes
+                            if (bufferingPercent >= 100f && isPlayerReady) {
+                                isLoading = false
+                            }
                         } else {
                             isLoading = bufferingPercent < 100f
                         }
@@ -233,56 +243,42 @@ fun VLCMediaPlayer(
     
     // Position tracking and profanity filtering logic with manual subtitle timing
     LaunchedEffect(mediaPlayer, filteredSubtitleResult, showSubtitles, currentFilterLevel, subtitleTimingOffsetMs) {
-        Log.d("VLCMediaPlayer", "LaunchedEffect triggered - filteredSubtitleResult: ${filteredSubtitleResult != null}, showSubtitles: $showSubtitles, filterLevel: $currentFilterLevel, timingOffset: ${subtitleTimingOffsetMs}ms")
+        Log.d("VLCMediaPlayer", "Position tracking started - hasSubtitles: ${filteredSubtitleResult != null}, showSubtitles: $showSubtitles, filterLevel: $currentFilterLevel")
         while (isActive) {
             mediaPlayer?.let { player ->
                 val position = try {
                     player.time
                 } catch (e: IllegalStateException) {
                     // Player has been released, stop tracking
-                    Log.w("VLCMediaPlayer", "Player released, stopping position tracking")
                     return@LaunchedEffect
                 } catch (e: Exception) {
-                    Log.w("VLCMediaPlayer", "Error getting player time: ${e.message}")
                     return@LaunchedEffect
                 }
-                
+
                 currentPosition = position
-                
+
                 // Handle profanity filtering if we have subtitle results
                 filteredSubtitleResult?.let { result ->
                     try {
                         // Apply manual timing offset by adjusting the position used for both audio and subtitle logic
                         val adjustedPosition = position + subtitleTimingOffsetMs
-                        
-                        // Log timing adjustments for debugging
-                        if (subtitleTimingOffsetMs != 0L) {
-                            Log.d("VLCMediaPlayer", "Applying timing offset: ${subtitleTimingOffsetMs}ms (position: ${position}ms -> adjusted: ${adjustedPosition}ms)")
-                        }
-                        
+
                         // Check if we need to mute audio based on profanity timestamps
                         // Skip audio muting entirely when filter level is NONE
                         val shouldMute = if (currentFilterLevel == ProfanityFilterLevel.NONE) {
                             false
                         } else {
                             filteredSubtitleManager.getCurrentMutingStatus(
-                                result.mutingTimestamps, 
+                                result.mutingTimestamps,
                                 adjustedPosition
                             )
                         }
-                        
+
                         if (shouldMute != isAudioMuted) {
                             isAudioMuted = shouldMute
                             try {
                                 // Use LibVLC volume property for audio control
-                                if (shouldMute) {
-                                    player.volume = 0
-                                    Log.d("VLCMediaPlayer", "Audio muted via volume = 0")
-                                } else {
-                                    player.volume = 100
-                                    Log.d("VLCMediaPlayer", "Audio unmuted via volume = 100")
-                                }
-                                Log.d("VLCMediaPlayer", "Audio muting changed: $shouldMute at adjusted position ${adjustedPosition}ms (original: ${position}ms, offset: ${subtitleTimingOffsetMs}ms)")
+                                player.volume = if (shouldMute) 0 else 100
                             } catch (e: Exception) {
                                 Log.e("VLCMediaPlayer", "Error setting volume: ${e.message}")
                             }
@@ -345,7 +341,7 @@ fun VLCMediaPlayer(
             }
             
             if (isActive) {
-                delay(100) // Update every 100ms for smooth filtering
+                delay(200) // Update every 200ms - reduced from 100ms for better performance
             }
         }
     }
@@ -450,39 +446,25 @@ fun VLCMediaPlayer(
         }
     }
     
-    // Seek-aware timeout mechanism and fallback playback trigger
-    LaunchedEffect(Unit) {
-        // First attempt: Wait 5 seconds and try manual play if still loading
-        delay(5000)
+    // Immediate playback trigger and timeout mechanism
+    LaunchedEffect(mediaPlayer) {
+        // Wait briefly for initial handshake
+        delay(1000)
         if (isActive && isLoading && !isSeekBuffering && mediaPlayer != null && playerError == null) {
-            Log.w("VLCMediaPlayer", "Video still loading after 5s (seek buffering: $isSeekBuffering)")
+            Log.d("VLCMediaPlayer", "Triggering immediate play attempt...")
             try {
                 mediaPlayer?.play()
             } catch (e: Exception) {
-                Log.e("VLCMediaPlayer", "Manual play failed: ${e.message}")
+                // Ignore
             }
         }
 
-        // Progressive timeout check with seek awareness
-        var totalWaitTime = 5000L
-        while (isActive && isLoading && playerError == null) {
-            delay(5000) // Check every 5 seconds
-            totalWaitTime += 5000
-
-            // Skip timeout if currently seek buffering
-            if (isSeekBuffering) {
-                Log.d("VLCMediaPlayer", "Seek buffering in progress, pausing timeout")
-                totalWaitTime = 5000L // Reset timeout
-                continue
-            }
-
-            // Only trigger timeout after 30s of continuous loading (not seek buffering)
-            if (totalWaitTime >= 30000) {
-                Log.w("VLCMediaPlayer", "Video loading timeout - 30 seconds elapsed")
-                playerError = "Video loading timeout - please check your network connection"
-                isLoading = false
-                break
-            }
+        // Standard timeout (30s) without the 5s polling delay
+        delay(30000)
+        if (isActive && isLoading && playerError == null) {
+            Log.w("VLCMediaPlayer", "Video loading timeout - 30 seconds elapsed")
+            playerError = "Video loading timeout - please check your network connection"
+            isLoading = false
         }
     }
 

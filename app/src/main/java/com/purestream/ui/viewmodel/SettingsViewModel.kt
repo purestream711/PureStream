@@ -69,13 +69,19 @@ class SettingsViewModel(context: Context) : ViewModel() {
                     is PremiumStatusState.Error -> false
                 }
                 
+                // Determine effective premium status (handles cheat codes)
+                val isPremiumEffective = premiumState is PremiumStatusState.Premium
+                
                 _uiState.value = _uiState.value.copy(
-                    billingConnected = billingConnected
+                    billingConnected = billingConnected,
+                    appSettings = _uiState.value.appSettings.copy(isPremium = isPremiumEffective)
                 )
                 
                 // Refresh app settings when premium status changes
                 if (premiumState is PremiumStatusState.Premium || premiumState is PremiumStatusState.Free) {
-                    loadAppSettings()
+                    // We don't call loadAppSettings() here to avoid overwriting the effective status
+                    // Instead, we trust PremiumStatusManager as the source of truth for premium status
+                    // AppSettingsRepository will be updated by PremiumStatusManager eventually if needed
                 }
             }
         }

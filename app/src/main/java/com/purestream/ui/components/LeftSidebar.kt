@@ -17,10 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -31,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.focusGroup
 import com.purestream.data.model.Profile
 import com.purestream.ui.theme.tvIconFocusIndicator
 import com.purestream.ui.theme.animatedNavigationIcon
@@ -53,50 +52,48 @@ fun LeftSidebar(
     currentSection: String = "home", // Track current section for highlighting
     modifier: Modifier = Modifier
 ) {
-    // Focus requesters for each sidebar item
+    // Focus requesters
     val searchFocusRequester = remember { FocusRequester() }
-    val homeFocusRequester = remember { FocusRequester() }
+    // sidebarFocusRequester will be used for the Home button
     val moviesFocusRequester = remember { FocusRequester() }
     val tvShowsFocusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
     val profileFocusRequester = remember { FocusRequester() }
     
-    Column(
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    Box(
         modifier = modifier
-            .background(Color.Transparent)
-            .padding(start = 6.dp, end = 6.dp)
-            .focusRequester(sidebarFocusRequester)
-            .focusProperties {
-                right = heroPlayButtonFocusRequester
-            },
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .width(80.dp)
+            .fillMaxHeight()
+            .padding(vertical = 24.dp, horizontal = 12.dp),
+        contentAlignment = Alignment.Center
     ) {
-        // Navigation Items - Icons only
+        // Floating Panel (Now Transparent)
         Column(
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .wrapContentHeight()
+                .width(56.dp)
+                .focusGroup()
+                .focusProperties { end = heroPlayButtonFocusRequester },
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             SidebarIconButton(
                 icon = Icons.Default.Search,
                 isSelected = currentSection == "search",
                 onClick = onSearchClick,
                 focusRequester = searchFocusRequester,
-                modifier = Modifier.focusProperties {
-                    down = homeFocusRequester
-                }
+                modifier = Modifier.focusProperties { down = sidebarFocusRequester }
             )
             
             SidebarIconButton(
                 icon = Icons.Default.Home,
                 isSelected = currentSection == "home",
                 onClick = onHomeClick,
-                focusRequester = homeFocusRequester,
-                modifier = Modifier.focusProperties {
-                    up = searchFocusRequester
-                    down = moviesFocusRequester
-                }
+                focusRequester = sidebarFocusRequester,
+                modifier = Modifier.focusProperties { up = searchFocusRequester; down = moviesFocusRequester }
             )
             
             SidebarIconButton(
@@ -104,10 +101,7 @@ fun LeftSidebar(
                 isSelected = currentSection == "movies",
                 onClick = onMoviesClick,
                 focusRequester = moviesFocusRequester,
-                modifier = Modifier.focusProperties {
-                    up = homeFocusRequester
-                    down = tvShowsFocusRequester
-                }
+                modifier = Modifier.focusProperties { up = sidebarFocusRequester; down = tvShowsFocusRequester }
             )
             
             SidebarIconButton(
@@ -115,10 +109,7 @@ fun LeftSidebar(
                 isSelected = currentSection == "tv_shows",
                 onClick = onTvShowsClick,
                 focusRequester = tvShowsFocusRequester,
-                modifier = Modifier.focusProperties {
-                    up = moviesFocusRequester
-                    down = settingsFocusRequester
-                }
+                modifier = Modifier.focusProperties { up = moviesFocusRequester; down = settingsFocusRequester }
             )
             
             SidebarIconButton(
@@ -126,26 +117,19 @@ fun LeftSidebar(
                 isSelected = currentSection == "settings",
                 onClick = onSettingsClick,
                 focusRequester = settingsFocusRequester,
-                modifier = Modifier.focusProperties {
-                    up = tvShowsFocusRequester
-                    down = profileFocusRequester
-                }
+                modifier = Modifier.focusProperties { up = tvShowsFocusRequester; down = profileFocusRequester }
             )
             
-            // Profile Icon - Inline with other icons
             ProfileIconButton(
                 currentProfile = currentProfile,
                 onClick = onProfileClick,
                 focusRequester = profileFocusRequester,
-                modifier = Modifier.focusProperties {
-                    up = settingsFocusRequester
-                }
+                modifier = Modifier.focusProperties { up = settingsFocusRequester }
             )
         }
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun SidebarIconButton(
     icon: ImageVector,
@@ -154,51 +138,45 @@ private fun SidebarIconButton(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
-    var isFocused by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     val context = LocalContext.current
     val soundManager = remember { SoundManager.getInstance(context) }
-    val animatedIconColor = getAnimatedNavigationIconColor(
-        interactionSource = interactionSource,
-        defaultColor = if (isSelected || isFocused) Color.White else Color(0xFF9CA3AF)
-    )
     
+    val bgColor by androidx.compose.animation.animateColorAsState(
+        targetValue = when {
+            isFocused -> Color.White
+            isSelected -> Color(0xFF8B5CF6).copy(alpha = 0.2f)
+            else -> Color.Transparent
+        },
+        label = "btn_bg"
+    )
+
     Box(
         modifier = modifier
-            .size(40.dp)
-            .background(Color.Transparent)
-            .clip(RoundedCornerShape(8.dp))
+            .size(44.dp)
+            .background(bgColor, CircleShape)
+            .then(if (isSelected && !isFocused) Modifier.border(1.dp, Color(0xFF8B5CF6).copy(alpha = 0.5f), CircleShape) else Modifier)
+            .clip(CircleShape)
             .focusRequester(focusRequester)
             .hoverable(interactionSource)
             .focusable(interactionSource = interactionSource)
-            .onFocusChanged { focusState ->
-                val wasFocused = isFocused
-                isFocused = focusState.isFocused
-                
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("LeftSidebar", "Sidebar icon gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
-                }
-            }
-            .clickable { 
-                android.util.Log.d("LeftSidebar", "Sidebar icon clicked - playing CLICK sound")
+            .onFocusChanged {  }
+            .clickable(interactionSource = interactionSource, indication = null) {
                 soundManager.playSound(SoundManager.Sound.CLICK)
-                onClick() 
-            }
-            .tvIconFocusIndicator(),
+                onClick()
+            },
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = animatedIconColor,
-            modifier = Modifier.size(20.dp)
+            tint = if (isFocused) Color.Black else if (isSelected) Color(0xFFC4B5FD) else Color.White.copy(alpha = 0.4f),
+            modifier = Modifier.size(22.dp)
         )
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ProfileIconButton(
     currentProfile: Profile?,
@@ -206,92 +184,43 @@ private fun ProfileIconButton(
     focusRequester: FocusRequester,
     modifier: Modifier = Modifier
 ) {
-    var isFocused by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
     val context = LocalContext.current
     val soundManager = remember { SoundManager.getInstance(context) }
     
     Box(
         modifier = modifier
-            .size(40.dp)
-            .background(
-                color = Color.Transparent,
-                shape = RoundedCornerShape(8.dp)
+            .size(44.dp)
+            .background(if (isFocused) Color.White else Color.Transparent, CircleShape)
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.1f),
+                shape = CircleShape
             )
-            .clip(RoundedCornerShape(8.dp))
+            .clip(CircleShape)
             .focusRequester(focusRequester)
-            .animatedProfileBorder(interactionSource = interactionSource)
-            .onFocusChanged { focusState ->
-                val wasFocused = isFocused
-                isFocused = focusState.isFocused
-                
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("LeftSidebar", "Profile icon gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
-                }
-            }
-            .clickable { 
-                android.util.Log.d("LeftSidebar", "Profile icon clicked - playing CLICK sound")
+            .focusable(interactionSource = interactionSource)
+            .onFocusChanged {  }
+            .clickable(interactionSource = interactionSource, indication = null) {
                 soundManager.playSound(SoundManager.Sound.CLICK)
-                onClick() 
-            }
-            .tvIconFocusIndicator(),
+                onClick()
+            },
         contentAlignment = Alignment.Center
     ) {
         if (currentProfile != null) {
-            val context = LocalContext.current
-            val avatarResourceId = context.resources.getIdentifier(
-                currentProfile.avatarImage, 
-                "drawable", 
-                context.packageName
-            )
-            
+            val avatarResourceId = context.resources.getIdentifier(currentProfile.avatarImage, "drawable", context.packageName)
             if (avatarResourceId != 0) {
                 Image(
-                    painter = painterResource(id = avatarResourceId),
-                    contentDescription = "${currentProfile.name} Avatar",
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape),
+                    painter = painterResource(avatarResourceId),
+                    contentDescription = null,
+                    modifier = Modifier.size(if (isFocused) 36.dp else 32.dp).clip(CircleShape),
                     contentScale = ContentScale.Crop
                 )
             } else {
-                // Fallback to text avatar if image not found
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(
-                            color = Color(0xFF6366F1),
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = currentProfile.name.take(2).uppercase(),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
+                Box(Modifier.size(32.dp).background(Color(0xFF8B5CF6), CircleShape), contentAlignment = Alignment.Center) {
+                    Text(currentProfile.name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
-            }
-        } else {
-            // Default profile icon when no profile is selected
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .background(
-                        color = Color(0xFF6B7280),
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "?",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
             }
         }
     }

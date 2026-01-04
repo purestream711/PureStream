@@ -619,6 +619,20 @@ class MovieDetailsViewModel(
         }
     }
 
+    fun refreshProgress() {
+        _uiState.value.movie?.let { movie ->
+            loadProgress(movie.ratingKey)
+        }
+    }
+
+    /**
+     * Clear all state - use when switching to demo mode or logging out
+     */
+    fun clearState() {
+        _uiState.value = MovieDetailsState()
+        android.util.Log.d("MovieDetailsViewModel", "State cleared - all data reset")
+    }
+
     // Load watch progress for the movie
     private fun loadProgress(ratingKey: String) {
         val repository = watchProgressRepository

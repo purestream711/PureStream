@@ -31,6 +31,9 @@ data class TvShow(
     val seasonCount: Int?,
     @SerializedName("Guid")
     val guid: List<GuidItem>? = emptyList(),
+    @SerializedName("Image")
+    val images: List<PlexImage>? = emptyList(),
+    val logoUrl: String? = null,
     val profanityLevel: ProfanityLevel? = ProfanityLevel.UNKNOWN
 ) {
     // Additional computed properties for app functionality
@@ -104,6 +107,9 @@ data class Episode(
     val media: List<MediaItem>? = emptyList(),
     @SerializedName("Guid")
     val guid: List<GuidItem>? = emptyList(),
+    @SerializedName("Image")
+    val images: List<PlexImage>? = emptyList(),
+    val logoUrl: String? = null,
     val hasSubtitles: Boolean = false,
     val profanityLevel: ProfanityLevel? = ProfanityLevel.UNKNOWN
 ) {

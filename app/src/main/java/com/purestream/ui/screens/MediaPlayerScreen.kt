@@ -3,6 +3,7 @@ package com.purestream.ui.screens
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -186,26 +187,45 @@ fun MediaPlayerScreen(
     var showControls by remember { mutableStateOf(true) } // Start visible after loading
     var showGearMenu by remember { mutableStateOf(false) }
     var retryCount by remember { mutableIntStateOf(0) }
-    var currentVideoUrl by remember { mutableStateOf(videoUrl) }
+
+    // Collect video URL from ViewModel if not provided via parameter
+    val viewModelVideoUrl by viewModel.videoUrl.collectAsStateWithLifecycle()
+    var currentVideoUrl by remember(videoUrl, viewModelVideoUrl) {
+        mutableStateOf(if (videoUrl.isNotEmpty()) videoUrl else viewModelVideoUrl ?: "")
+    }
+
     var isExiting by remember { mutableStateOf(false) }
+
+    // Trigger URL loading if missing
+    LaunchedEffect(Unit) {
+        if (currentVideoUrl.isEmpty()) {
+            android.util.Log.d("MediaPlayerScreen", "Video URL is empty, requesting load from ViewModel")
+            viewModel.loadVideoUrl(actualMovie, actualEpisode)
+        }
+    }
 
     // Level-up celebration state
     var showCelebration by remember { mutableStateOf(false) }
     var levelUpData by remember { mutableStateOf<MediaPlayerViewModel.LevelUpResult?>(null) }
 
-    // Lock orientation to portrait when celebration shows (mobile only)
-    DisposableEffect(showCelebration, isMobile) {
+    // Achievement badge card state
+    var pendingAchievements by remember { mutableStateOf<List<Achievement>>(emptyList()) }
+    var currentAchievementIndex by remember { mutableIntStateOf(0) }
+    var showBadgeCard by remember { mutableStateOf(false) }
+
+    // Lock orientation to portrait when celebration or badge card shows (mobile only)
+    DisposableEffect(showCelebration, showBadgeCard, isMobile) {
         val activity = context as? Activity
         val originalOrientation = activity?.requestedOrientation
 
-        if (showCelebration && isMobile && activity != null) {
-            // Force portrait before showing celebration
+        if ((showCelebration || showBadgeCard) && isMobile && activity != null) {
+            // Force portrait before showing celebration or badge card
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
 
         onDispose {
-            // Restore original orientation when celebration is dismissed
-            if (showCelebration && isMobile && activity != null && originalOrientation != null) {
+            // Restore original orientation when celebration and badge cards are dismissed
+            if ((showCelebration || showBadgeCard) && isMobile && activity != null && originalOrientation != null) {
                 activity.requestedOrientation = originalOrientation
             }
         }
@@ -318,11 +338,19 @@ fun MediaPlayerScreen(
                 // Save session progress before exiting
                 coroutineScope.launch {
                     val levelUpResult = viewModel.saveSessionProgress()
-                    if (levelUpResult.leveledUp) {
-                        android.util.Log.d("MediaPlayerScreen",
-                            "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                    if (levelUpResult.leveledUp || levelUpResult.unlockedAchievements.isNotEmpty()) {
                         levelUpData = levelUpResult
-                        showCelebration = true
+                        pendingAchievements = levelUpResult.unlockedAchievements
+                        currentAchievementIndex = 0
+
+                        if (levelUpResult.leveledUp) {
+                            android.util.Log.d("MediaPlayerScreen",
+                                "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                            showCelebration = true
+                        } else {
+                            // No level up, but achievements unlocked - show first badge card
+                            showBadgeCard = true
+                        }
                     } else {
                         // Exit to previous screen
                         android.util.Log.d("MediaPlayerScreen", "Calling onBackClick to exit")
@@ -650,11 +678,19 @@ fun MediaPlayerScreen(
 
                         // Save session progress before exiting
                         val levelUpResult = viewModel.saveSessionProgress()
-                        if (levelUpResult.leveledUp) {
-                            android.util.Log.d("MediaPlayerScreen",
-                                "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                        if (levelUpResult.leveledUp || levelUpResult.unlockedAchievements.isNotEmpty()) {
                             levelUpData = levelUpResult
-                            showCelebration = true
+                            pendingAchievements = levelUpResult.unlockedAchievements
+                            currentAchievementIndex = 0
+
+                            if (levelUpResult.leveledUp) {
+                                android.util.Log.d("MediaPlayerScreen",
+                                    "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                                showCelebration = true
+                            } else {
+                                // No level up, but achievements unlocked - show first badge card
+                                showBadgeCard = true
+                            }
                         } else {
                             // Navigate back immediately
                             onBackClick()
@@ -773,11 +809,19 @@ fun MediaPlayerScreen(
                     // Save session progress before exiting
                     coroutineScope.launch {
                         val levelUpResult = viewModel.saveSessionProgress()
-                        if (levelUpResult.leveledUp) {
-                            android.util.Log.d("MediaPlayerScreen",
-                                "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                        if (levelUpResult.leveledUp || levelUpResult.unlockedAchievements.isNotEmpty()) {
                             levelUpData = levelUpResult
-                            showCelebration = true
+                            pendingAchievements = levelUpResult.unlockedAchievements
+                            currentAchievementIndex = 0
+
+                            if (levelUpResult.leveledUp) {
+                                android.util.Log.d("MediaPlayerScreen",
+                                    "Level up! ${levelUpResult.oldLevel} → ${levelUpResult.newLevel}")
+                                showCelebration = true
+                            } else {
+                                // No level up, but achievements unlocked - show first badge card
+                                showBadgeCard = true
+                            }
                         } else {
                             onBackClick()
                         }
@@ -844,7 +888,31 @@ fun MediaPlayerScreen(
             totalFilteredWords = levelUpData!!.wordsFiltered,
             onDismiss = {
                 showCelebration = false
-                onBackClick()
+                // After level-up screen, show badge cards if any
+                if (pendingAchievements.isNotEmpty()) {
+                    currentAchievementIndex = 0
+                    showBadgeCard = true
+                } else {
+                    onBackClick()
+                }
+            }
+        )
+    }
+
+    // Show badge card for newly unlocked achievements
+    if (showBadgeCard && pendingAchievements.isNotEmpty() && currentAchievementIndex < pendingAchievements.size) {
+        val achievement = pendingAchievements[currentAchievementIndex]
+        AchievementUnlockCelebrationScreen(
+            achievement = achievement,
+            onDismiss = {
+                // Move to next achievement or exit
+                currentAchievementIndex++
+                if (currentAchievementIndex >= pendingAchievements.size) {
+                    // All achievements shown, exit
+                    showBadgeCard = false
+                    onBackClick()
+                }
+                // Otherwise the next achievement will show automatically due to index change
             }
         )
     }
@@ -986,26 +1054,35 @@ fun PlayerControls(
                         )
                     }
                 } else {
-                    // TV: Use TvIconButton for D-pad focus management
-                    TvIconButton(
-                        onClick = onPlayPause,
+                    // TV: Custom glassy button style
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .align(Alignment.Center)
                             .focusRequester(focusRequester)
-                            .animatedProfileBorder(
-                                borderWidth = 3.dp,
-                                interactionSource = playButtonInteractionSource
-                            )
-                            .hoverable(playButtonInteractionSource)
-                            .focusable(interactionSource = playButtonInteractionSource)
+                            .size(34.dp)
                             .onFocusChanged { playButtonHovered = it.isFocused }
-                            .size(32.dp)
+                            .focusable(interactionSource = playButtonInteractionSource)
+                            .clickable(
+                                interactionSource = playButtonInteractionSource,
+                                indication = null,
+                                onClick = onPlayPause
+                            )
+                            .background(
+                                color = if (playButtonHovered) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                                shape = CircleShape
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = Color.White.copy(alpha = 0.3f),
+                                shape = CircleShape
+                            )
                     ) {
                         Icon(
                             if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             tint = Color.White,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -1060,18 +1137,14 @@ fun PlayerControls(
                         )
                     }
                 } else {
-                    // TV: Use TvIconButton for D-pad focus management
-                    TvIconButton(
-                        onClick = onGearClick,
+                    // TV: Custom glassy button style
+                    Box(
+                        contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .animatedProfileBorder(
-                                borderWidth = 2.dp,
-                                interactionSource = gearButtonInteractionSource
-                            )
-                            .hoverable(gearButtonInteractionSource)
-                            .focusable(interactionSource = gearButtonInteractionSource)
+                            .size(34.dp)
                             .onFocusChanged { gearButtonHovered = it.isFocused }
+                            .focusable(interactionSource = gearButtonInteractionSource)
                             .onKeyEvent { keyEvent ->
                                 // Handle D-pad center press explicitly for TV remote compatibility
                                 if (keyEvent.type == KeyEventType.KeyUp && 
@@ -1083,13 +1156,26 @@ fun PlayerControls(
                                     false
                                 }
                             }
-                            .size(32.dp)
+                            .clickable(
+                                interactionSource = gearButtonInteractionSource,
+                                indication = null,
+                                onClick = onGearClick
+                            )
+                            .background(
+                                color = if (gearButtonHovered) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                                shape = CircleShape
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = Color.White.copy(alpha = 0.3f),
+                                shape = CircleShape
+                            )
                     ) {
                         Icon(
                             Icons.Default.Settings,
                             contentDescription = "Settings",
                             tint = Color.White,
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }
@@ -1113,6 +1199,7 @@ fun GearMenuDialog(
     val isMobile = rememberIsMobile()
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
         text = {
             val columnModifier = if (isMobile) {
                 Modifier
@@ -1178,7 +1265,8 @@ fun GearMenuDialog(
                                 .focusable(interactionSource = subtitleToggleInteractionSource)
                                 .onFocusChanged { subtitleToggleHovered = it.isFocused },
                             colors = TvButtonDefaults.colors(
-                                containerColor = if (subtitlesEnabled) Color(0xFF10B981) else Color(0xFF374151),
+                                containerColor = if (subtitlesEnabled) Color(0xFF10B981).copy(alpha = 0.3f) else Color.White.copy(alpha = 0.1f),
+                                focusedContainerColor = if (subtitlesEnabled) Color(0xFF10B981) else Color(0xFF8B5CF6),
                                 contentColor = Color.White
                             )
                         ) {
@@ -1256,7 +1344,8 @@ fun GearMenuDialog(
                                             .focusable(interactionSource = timingButtonInteractionSource)
                                             .onFocusChanged { timingButtonHovered = it.isFocused },
                                         colors = TvButtonDefaults.colors(
-                                            containerColor = if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981),
+                                            containerColor = (if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981)).copy(alpha = 0.3f),
+                                            focusedContainerColor = if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981),
                                             contentColor = Color.White
                                         )
                                     ) {
@@ -1371,7 +1460,7 @@ fun GearMenuDialog(
                 Text("Done")
             }
         },
-        containerColor = Color(0xFF374151), // Dark grey background
+        containerColor = Color(0xFF191b2c).copy(alpha = 0.95f), // Glassy dark
         textContentColor = Color.White
     )
 }

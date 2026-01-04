@@ -7,6 +7,8 @@ import com.purestream.R
 
 class SoundManager private constructor(private val appContext: Context) {
     
+    private val hapticManager = HapticManager.getInstance(appContext)
+
     companion object {
         @Volatile
         private var INSTANCE: SoundManager? = null
@@ -20,7 +22,7 @@ class SoundManager private constructor(private val appContext: Context) {
     }
     
     enum class Sound {
-        BACK, CLICK, MOVE, STARTUP, LEVEL_UP
+        CLICK, STARTUP, LEVEL_UP, BADGE_SELECT, LEVELUP_CLICK
     }
     
     private val soundPool: SoundPool
@@ -49,11 +51,11 @@ class SoundManager private constructor(private val appContext: Context) {
         try {
             android.util.Log.d("SoundManager", "Starting to load navigation sounds...")
             
-            soundIds[Sound.BACK] = soundPool.load(context, R.raw.back, 1)
             soundIds[Sound.CLICK] = soundPool.load(context, R.raw.click, 1)
-            soundIds[Sound.MOVE] = soundPool.load(context, R.raw.move_dpad, 1)
             soundIds[Sound.STARTUP] = soundPool.load(context, R.raw.startup_sound, 1)
             soundIds[Sound.LEVEL_UP] = soundPool.load(context, R.raw.levelup_sound, 1)
+            soundIds[Sound.BADGE_SELECT] = soundPool.load(context, R.raw.badge_select, 1)
+            soundIds[Sound.LEVELUP_CLICK] = soundPool.load(context, R.raw.levelup_click, 1)
             
             // Set up load completion listener
             soundPool.setOnLoadCompleteListener { soundPool, sampleId, status ->
@@ -82,6 +84,13 @@ class SoundManager private constructor(private val appContext: Context) {
     }
     
     fun playSound(sound: Sound) {
+        // Trigger haptic feedback for relevant interaction sounds
+        when (sound) {
+            Sound.CLICK -> hapticManager.performClickHaptic()
+            Sound.LEVEL_UP, Sound.BADGE_SELECT, Sound.LEVELUP_CLICK -> hapticManager.performSuccessHaptic()
+            else -> { /* No haptic for other sounds */ }
+        }
+
         if (!enabled) {
             android.util.Log.d("SoundManager", "Sound disabled, not playing: $sound")
             return

@@ -105,16 +105,28 @@ fun HeroSection(
                 .padding(start = 80.dp, end = 100.dp, top = 80.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Title - smaller size
-            Text(
-                text = featuredContent.title,
-                fontSize = 42.sp,
-                fontWeight = FontWeight.Black,
-                color = Color.White,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Title or Logo
+            if (featuredContent.logoUrl != null) {
+                AsyncImage(
+                    model = featuredContent.logoUrl,
+                    contentDescription = featuredContent.title,
+                    modifier = Modifier
+                        .height(120.dp)
+                        .widthIn(max = 400.dp),
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.CenterStart
+                )
+            } else {
+                Text(
+                    text = featuredContent.title,
+                    fontSize = 42.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             
             // Metadata row (Year, Duration, Rating)
             Row(
@@ -282,12 +294,6 @@ private fun FocusableHeroButton(
             .onFocusChanged { focusState ->
                 val wasFocused = isFocused
                 isFocused = focusState.isFocused
-                
-                // Play sound when gaining focus (not when losing focus)
-                if (!wasFocused && focusState.isFocused) {
-                    android.util.Log.d("HeroSection", "Hero button gained focus - playing MOVE sound")
-                    soundManager.playSound(SoundManager.Sound.MOVE)
-                }
             }
     ) {
         Icon(

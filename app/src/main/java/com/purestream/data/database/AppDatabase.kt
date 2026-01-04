@@ -39,7 +39,7 @@ import android.content.Context
         CacheMetadataEntity::class,
         GeminiCachedMovie::class
     ],
-    version = 17,
+    version = 20,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -68,18 +68,52 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE profiles ADD COLUMN currentLevel INTEGER NOT NULL DEFAULT 1")
                 database.execSQL("ALTER TABLE profiles ADD COLUMN wordsFilteredThisLevel INTEGER NOT NULL DEFAULT 0")
 
-                // Add AI Curation columns (if missing in previous version)
-                // Using try-catch pattern or checking existence would be safer, but standard ADD COLUMN is fine if we assume v16 didn't have them
-                // If v16 DID have them, this migration would fail. Assuming they are new in v17.
+                // Add AI Curation columns
                 try {
                     database.execSQL("ALTER TABLE profiles ADD COLUMN aiCuratedEnabled INTEGER NOT NULL DEFAULT 0")
                     database.execSQL("ALTER TABLE profiles ADD COLUMN lastAiCurationTimestamp INTEGER NOT NULL DEFAULT 0")
                     database.execSQL("ALTER TABLE profiles ADD COLUMN aiFeaturedMovieRatingKey TEXT DEFAULT NULL")
                     database.execSQL("ALTER TABLE profiles ADD COLUMN isDefaultProfile INTEGER NOT NULL DEFAULT 0")
                 } catch (e: Exception) {
-                    // Ignore errors if columns already exist (e.g. during development iterations)
-                    // detailed logging would be good here but we'll suppress to ensure migration completes
+                    // Ignore if columns already exist
                 }
+            }
+        }
+
+        // Migration from version 17 to 18: Add unlockedAchievements
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE profiles ADD COLUMN unlockedAchievements TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        // Migration from version 18 to 19: Add preferred library columns to profiles
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                    database.execSQL("ALTER TABLE profiles ADD COLUMN preferredMovieLibraryId TEXT DEFAULT NULL")
+                    database.execSQL("ALTER TABLE profiles ADD COLUMN preferredTvShowLibraryId TEXT DEFAULT NULL")
+                    database.execSQL("ALTER TABLE profiles ADD COLUMN preferredDashboardLibraryId TEXT DEFAULT NULL")
+                } catch (e: Exception) {
+                    // Columns might already exist in some dev environments
+                }
+            }
+        }
+
+        // Migration from version 19 to 20: Add Gemini cached movies table
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `gemini_cached_movies` (
+                        `id` TEXT NOT NULL, 
+                        `profileId` TEXT NOT NULL, 
+                        `collectionId` TEXT NOT NULL, 
+                        `movieRatingKey` TEXT NOT NULL, 
+                        `order` INTEGER NOT NULL, 
+                        `cachedAt` INTEGER NOT NULL, 
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
             }
         }
 
@@ -90,11 +124,14 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "purestream_database"
                 )
-                // Add migrations to preserve user data across updates
-                .addMigrations(MIGRATION_16_17)
-                // Re-enable fallback to prevent crashes for users on very old versions (e.g. < 16)
-                // Users on v16 will be migrated to v17 safely.
-                // Users on < v16 will lose data but NOT crash.
+                // Add all migrations to ensure data preservation across versions
+                .addMigrations(
+                    MIGRATION_16_17, 
+                    MIGRATION_17_18, 
+                    MIGRATION_18_19, 
+                    MIGRATION_19_20
+                )
+                // Keep fallback only as a last resort for extremely old versions
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

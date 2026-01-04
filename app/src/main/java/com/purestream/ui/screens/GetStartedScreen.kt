@@ -88,6 +88,15 @@ fun GetStartedScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(NetflixDarkGray)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFF0F172A), // Dark blue-gray top
+                        Color(0xFF0D0D0D), // Pure black middle
+                        Color(0xFF0D0D0D)  // Pure black bottom
+                    )
+                )
+            )
     ) {
         Column(
             modifier = Modifier

@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -32,6 +33,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -46,6 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import coil.compose.AsyncImage
 import com.purestream.data.api.SearchResult
 import com.purestream.data.model.*
@@ -85,6 +89,24 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     val isMobile = rememberIsMobile()
+    
+    // Animation state
+    var contentVisible by remember { mutableStateOf(false) }
+    val contentAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(800),
+        label = "content_alpha"
+    )
+    val contentScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (contentVisible) 1f else 0.98f,
+        animationSpec = androidx.compose.animation.core.tween(800),
+        label = "content_scale"
+    )
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
+        contentVisible = true
+    }
 
     // Bottom navigation visibility for mobile (auto-hide on scroll)
     var isBottomNavVisible by remember { mutableStateOf(true) }
@@ -107,317 +129,140 @@ fun SearchScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(NetflixDarkGray)
+            .background(Color.Black)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Color(0xFF0F172A), Color.Black)
+                )
+            )
     ) {
+        // Pulsating background glow
+        val infiniteTransition = androidx.compose.animation.core.rememberInfiniteTransition(label = "glow")
+        val glowAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.1f,
+            targetValue = 0.25f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(6000),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+            ),
+            label = "glow_alpha"
+        )
+        Box(
+            modifier = Modifier.fillMaxSize().background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF8B5CF6).copy(alpha = glowAlpha), Color.Transparent),
+                    radius = 1200f
+                )
+            )
+        )
 
-        if (isMobile) {
-            // Mobile Layout: Use Box to overlay bottom nav on top of content
-            Box(modifier = Modifier.fillMaxSize()) {
-
-                // Main content - fills entire screen
-                Column(modifier = Modifier.fillMaxSize()) {
-                        // Search Header Section (Mobile)
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp)
-                        ) {
-                            // Screen Title
-                            Text(
-                                text = "Search",
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary,
-                                modifier = Modifier.padding(
-                                    top = 48.dp,
-                                    bottom = 16.dp
-                                )
-                            )
-
-                            // Search Bar (Mobile - no voice search for simplicity)
-                            SearchBar(
-                                query = searchQuery,
-                                onQueryChange = onSearchQueryChange,
-                                onSearch = { /* Mobile search submit */ },
-                                focusRequester = searchBarFocusRequester,
-                                onFocusChange = { /* Mobile focus handling */ },
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            // Search Status/Hints (Mobile)
-                            if (searchQuery.isEmpty()) {
-                                Text(
-                                    text = "Search for movies, TV shows, and episodes",
-                                    fontSize = 14.sp,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                )
-                            }
-
-                            // Popular Searches for Mobile - Always visible
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            Text(
-                                text = "Popular Searches",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextPrimary,
-                                modifier = Modifier.padding(bottom = 12.dp)
-                            )
-
-                            val popularSearches = listOf(
-                                "Action", "Comedy", "Marvel", "Star Wars",
-                                "Horror", "Documentary", "Kids", "Thriller"
-                            )
-
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp) // Fixed height for mobile grid
-                            ) {
-                                items(popularSearches.size) { index ->
-                                    val suggestion = popularSearches[index]
-                                    MobileSuggestionChip(
-                                        text = suggestion,
-                                        onClick = {
-                                            onSearchQueryChange(suggestion)
-                                            onSearchSubmit(suggestion)
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Search Results (Mobile)
-                        when {
-                            isLoading -> {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    CircularProgressIndicator(color = Color.White.copy(alpha = 0.8f))
-                                }
-                            }
-
-                            searchResults.isEmpty() && hasSearched -> {
-                                Box(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No results found for \"$searchQuery\"",
-                                        fontSize = 16.sp,
-                                        color = TextSecondary,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-
-                            searchResults.isNotEmpty() -> {
-                                SearchResultsGrid(
-                                    results = searchResults,
-                                    onResultClick = onSearchResultClick,
-                                    focusRequester = resultsFocusRequester,
-                                    modifier = Modifier.fillMaxSize(),
-                                    isMobile = true,
-                                    onLoadMore = onLoadMore,
-                                    onBottomNavVisibilityChange = { isVisible -> isBottomNavVisible = isVisible }
-                                )
-                            }
-                        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = contentAlpha
+                    scaleX = contentScale
+                    scaleY = contentScale
                 }
+        ) {
+            if (isMobile) {
+                // Mobile Layout
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        SearchHeaderSection(
+                            searchQuery = searchQuery,
+                            onQueryChange = onSearchQueryChange,
+                            onSearchSubmit = onSearchSubmit,
+                            isSearching = isSearching,
+                            searchResults = searchResults,
+                            isMobile = true,
+                            searchBarFocusRequester = searchBarFocusRequester,
+                            voiceSearchFocusRequester = voiceSearchFocusRequester,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            resultsFocusRequester = resultsFocusRequester
+                        )
 
-                // Bottom Navigation (Overlay) - animated visibility
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isBottomNavVisible,
-                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(300)) +
-                            androidx.compose.animation.slideInVertically(
-                                animationSpec = androidx.compose.animation.core.tween(300),
-                                initialOffsetY = { it }
-                            ),
-                    exit = androidx.compose.animation.fadeOut(animationSpec = androidx.compose.animation.core.tween(300)) +
-                           androidx.compose.animation.slideOutVertically(
-                               animationSpec = androidx.compose.animation.core.tween(300),
-                               targetOffsetY = { it }
-                           ),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                ) {
-                    BottomNavigation(
-                        currentProfile = currentProfile,
-                        onHomeClick = onHomeClick,
-                        onSearchClick = { /* Already on search */ },
-                        onMoviesClick = onMoviesClick,
-                        onTvShowsClick = onTvShowsClick,
-                        onSettingsClick = onSettingsClick,
-                        onProfileClick = onSwitchUser,
-                        currentSection = "search"
-                    )
-                }
-            }
-        } else {
-            // TV Layout: Row with sidebar and content
-            Row(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Left Sidebar - Fixed width with transparent background
-                Box(
-                    modifier = Modifier
-                        .width(60.dp)
-                        .fillMaxHeight()
-                        .background(Color.Transparent)
-                ) {
-                    LeftSidebar(
-                        currentProfile = currentProfile,
-                        onHomeClick = onHomeClick,
-                        onSearchClick = { /* Already on search */ },
-                        onMoviesClick = onMoviesClick,
-                        onTvShowsClick = onTvShowsClick,
-                        onSettingsClick = onSettingsClick,
-                        onProfileClick = onSwitchUser,
-                        sidebarFocusRequester = sidebarFocusRequester,
-                        heroPlayButtonFocusRequester = searchBarFocusRequester,
-                        currentSection = "search",
-                        modifier = Modifier.fillMaxHeight()
-                    )
-                }
+                        SearchStateLayer(
+                            isLoading = isLoading,
+                            searchResults = searchResults,
+                            hasSearched = hasSearched,
+                            searchQuery = searchQuery,
+                            onSearchResultClick = onSearchResultClick,
+                            onLoadMore = onLoadMore,
+                            resultsFocusRequester = resultsFocusRequester,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            searchBarFocusRequester = searchBarFocusRequester,
+                            isMobile = true,
+                            onBottomNavVisibilityChange = { isBottomNavVisible = it },
+                            onSuggestionClick = { onSearchQueryChange(it); onSearchSubmit(it) }
+                        )
+                    }
 
-                // Main Content Area - Search Interface
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .background(Color.Transparent)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxSize()
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isBottomNavVisible,
+                        modifier = Modifier.align(Alignment.BottomCenter)
                     ) {
-                        // Search Header Section
-                        Column(
-                            modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp)
-                        ) {
-                            // Screen Title
-                            Text(
-                                text = "Search",
-                                fontSize = 32.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary,
-                                modifier = Modifier.padding(bottom = 24.dp)
-                            )
+                        BottomNavigation(
+                            currentProfile = currentProfile,
+                            onHomeClick = onHomeClick,
+                            onSearchClick = { },
+                            onMoviesClick = onMoviesClick,
+                            onTvShowsClick = onTvShowsClick,
+                            onSettingsClick = onSettingsClick,
+                            onProfileClick = onSwitchUser,
+                            currentSection = "search",
+                            isVisible = true
+                        )
+                    }
+                }
+            } else {
+                // TV Layout
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.width(80.dp).fillMaxHeight()) {
+                        LeftSidebar(
+                            currentProfile = currentProfile,
+                            onHomeClick = onHomeClick,
+                            onSearchClick = { },
+                            onMoviesClick = onMoviesClick,
+                            onTvShowsClick = onTvShowsClick,
+                            onSettingsClick = onSettingsClick,
+                            onProfileClick = onSwitchUser,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            heroPlayButtonFocusRequester = searchBarFocusRequester,
+                            currentSection = "search",
+                            modifier = Modifier.fillMaxHeight()
+                        )
+                    }
 
-                            // Search Bar and Voice Search Row
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                // Search Bar
-                                SearchBar(
-                                    query = searchQuery,
-                                    onQueryChange = onSearchQueryChange,
-                                    onSearch = onSearchSubmit,
-                                    focusRequester = searchBarFocusRequester,
-                                    onFocusChange = { isFocused ->
-                                        if (isFocused) {
-                                            keyboardController?.show()
-                                        }
-                                    },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .focusProperties {
-                                            left = sidebarFocusRequester
-                                            right = voiceSearchFocusRequester
-                                            down = when {
-                                                searchResults.isNotEmpty() -> resultsFocusRequester
-                                                else -> FocusRequester.Default
-                                            }
-                                        }
-                                )
+                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        SearchHeaderSection(
+                            searchQuery = searchQuery,
+                            onQueryChange = onSearchQueryChange,
+                            onSearchSubmit = onSearchSubmit,
+                            isSearching = isSearching,
+                            searchResults = searchResults,
+                            isMobile = false,
+                            searchBarFocusRequester = searchBarFocusRequester,
+                            voiceSearchFocusRequester = voiceSearchFocusRequester,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            resultsFocusRequester = resultsFocusRequester,
+                            onVoiceSearchStart = onVoiceSearchStart,
+                            keyboardController = keyboardController
+                        )
 
-                                // Voice Search Button
-                                VoiceSearchButton(
-                                    onClick = onVoiceSearchStart,
-                                    focusRequester = voiceSearchFocusRequester,
-                                    modifier = Modifier.focusProperties {
-                                        left = searchBarFocusRequester
-                                        down = when {
-                                            searchResults.isNotEmpty() -> resultsFocusRequester
-                                            else -> FocusRequester.Default
-                                        }
-                                    }
-                                )
-                            }
-
-                            // Search Status/Hints
-                            if (searchQuery.isEmpty()) {
-                                Text(
-                                    text = "Search for movies, TV shows, and episodes",
-                                    fontSize = 14.sp,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(top = 12.dp)
-                                )
-                            } else if (isSearching) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 12.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        color = NetflixRed,
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Searching...",
-                                        fontSize = 14.sp,
-                                        color = TextSecondary
-                                    )
-                                }
-                            } else if (searchResults.isNotEmpty()) {
-                                Text(
-                                    text = "${searchResults.size} results for \"$searchQuery\"",
-                                    fontSize = 14.sp,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(top = 12.dp)
-                                )
-                            } else if (searchQuery.isNotEmpty()) {
-                                Text(
-                                    text = "No results found for \"$searchQuery\"",
-                                    fontSize = 14.sp,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(top = 12.dp)
-                                )
-                            }
-                        }
-
-                        // Search Results Section
-                        if (searchResults.isNotEmpty()) {
-                            SearchResultsGrid(
-                                results = searchResults,
-                                onResultClick = onSearchResultClick,
-                                focusRequester = resultsFocusRequester,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .focusProperties {
-                                        left = sidebarFocusRequester
-                                        up = searchBarFocusRequester
-                                    },
-                                isMobile = false,
-                                onLoadMore = onLoadMore
-                            )
-                        } else if (searchQuery.isEmpty()) {
-                            // Show search suggestions or recent searches when empty
-                            SearchSuggestions(
-                                onSuggestionClick = { suggestion ->
-                                    onSearchQueryChange(suggestion)
-                                    onSearchSubmit(suggestion)
-                                },
-                                searchBarFocusRequester = searchBarFocusRequester,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
+                        SearchStateLayer(
+                            isLoading = isLoading,
+                            searchResults = searchResults,
+                            hasSearched = hasSearched,
+                            searchQuery = searchQuery,
+                            onSearchResultClick = onSearchResultClick,
+                            onLoadMore = onLoadMore,
+                            resultsFocusRequester = resultsFocusRequester,
+                            sidebarFocusRequester = sidebarFocusRequester,
+                            searchBarFocusRequester = searchBarFocusRequester,
+                            isMobile = false,
+                            onSuggestionClick = { onSearchQueryChange(it); onSearchSubmit(it) }
+                        )
                     }
                 }
             }
@@ -425,480 +270,338 @@ fun SearchScreen(
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun SearchHeaderSection(
+    searchQuery: String,
+    onQueryChange: (String) -> Unit,
+    onSearchSubmit: (String) -> Unit,
+    isSearching: Boolean,
+    searchResults: List<SearchResult>,
+    isMobile: Boolean,
+    searchBarFocusRequester: FocusRequester,
+    voiceSearchFocusRequester: FocusRequester,
+    sidebarFocusRequester: FocusRequester,
+    resultsFocusRequester: FocusRequester,
+    onVoiceSearchStart: () -> Unit = {},
+    keyboardController: androidx.compose.ui.platform.SoftwareKeyboardController? = null
+) {
+    Column(
+        modifier = Modifier.padding(
+            start = if (isMobile) 24.dp else 48.dp,
+            end = if (isMobile) 24.dp else 48.dp,
+            top = if (isMobile) 56.dp else 32.dp,
+            bottom = if (isMobile) 24.dp else 32.dp
+        ),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = onQueryChange,
+                onSearch = onSearchSubmit,
+                focusRequester = searchBarFocusRequester,
+                onFocusChange = { if (it && !isMobile) keyboardController?.show() },
+                modifier = Modifier.weight(1f).focusProperties {
+                    left = sidebarFocusRequester
+                    right = if (!isMobile) voiceSearchFocusRequester else FocusRequester.Default
+                    down = if (searchResults.isNotEmpty()) resultsFocusRequester else FocusRequester.Default
+                }
+            )
+
+            if (!isMobile) {
+                VoiceSearchButton(
+                    onClick = onVoiceSearchStart,
+                    focusRequester = voiceSearchFocusRequester,
+                    modifier = Modifier.focusProperties {
+                        left = searchBarFocusRequester
+                        down = if (searchResults.isNotEmpty()) resultsFocusRequester else FocusRequester.Default
+                    }
+                )
+            }
+        }
+
+        // Status Hints
+        if (isSearching) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(16.dp), color = Color(0xFF8B5CF6), strokeWidth = 2.dp)
+                Spacer(Modifier.width(12.dp))
+                Text("Searching...", fontSize = 14.sp, color = Color.White.copy(alpha = 0.6f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchStateLayer(
+    isLoading: Boolean,
+    searchResults: List<SearchResult>,
+    hasSearched: Boolean,
+    searchQuery: String,
+    onSearchResultClick: (SearchResult) -> Unit,
+    onLoadMore: () -> Unit,
+    resultsFocusRequester: FocusRequester,
+    sidebarFocusRequester: FocusRequester,
+    searchBarFocusRequester: FocusRequester,
+    isMobile: Boolean,
+    onBottomNavVisibilityChange: (Boolean) -> Unit = {},
+    onSuggestionClick: (String) -> Unit
+) {
+    when {
+        isLoading -> {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color(0xFF8B5CF6))
+            }
+        }
+        searchResults.isEmpty() && hasSearched -> {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No results for \"$searchQuery\"", color = Color.White.copy(alpha = 0.4f), fontSize = 18.sp)
+            }
+        }
+        searchResults.isNotEmpty() -> {
+            SearchResultsGrid(
+                results = searchResults,
+                onResultClick = onSearchResultClick,
+                focusRequester = resultsFocusRequester,
+                modifier = Modifier.fillMaxSize().focusProperties { left = sidebarFocusRequester; up = searchBarFocusRequester },
+                isMobile = isMobile,
+                onLoadMore = onLoadMore,
+                onBottomNavVisibilityChange = onBottomNavVisibilityChange
+            )
+        }
+        else -> {
+            SearchSuggestions(
+                onSuggestionClick = onSuggestionClick,
+                searchBarFocusRequester = searchBarFocusRequester,
+                modifier = Modifier.fillMaxSize(),
+                isMobile = isMobile
+            )
+        }
+    }
+}
+
 @Composable
 private fun SearchBar(
-            query: String,
-            onQueryChange: (String) -> Unit,
-            onSearch: (String) -> Unit,
-            focusRequester: FocusRequester,
-            onFocusChange: (Boolean) -> Unit,
-            modifier: Modifier = Modifier
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    focusRequester: FocusRequester,
+    onFocusChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    Surface(
+        modifier = modifier
+            .height(60.dp)
+            .focusRequester(focusRequester)
+            .focusable(interactionSource = interactionSource)
+            .onFocusChanged { onFocusChange(it.isFocused) },
+        color = Color(0xFF1A1C2E).copy(alpha = 0.7f),
+        shape = RoundedCornerShape(30.dp),
+        border = BorderStroke(1.dp, if (isFocused) Color.White else Color.White.copy(alpha = 0.1f))
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp)
         ) {
-            var isFocused by remember { mutableStateOf(false) }
-
-            Card(
-                modifier = modifier
-                    .height(56.dp)
-                    .focusable()
-                    .onFocusChanged { focusState ->
-                        isFocused = focusState.isFocused
-                        onFocusChange(focusState.isFocused)
-                    }
-                    .border(
-                        width = if (isFocused) 2.dp else 0.dp,
-                        color = if (isFocused) Color(0xFF8B5CF6) else Color.Transparent,
-                        shape = RoundedCornerShape(28.dp)
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = BackgroundCard
-                ),
-                shape = RoundedCornerShape(28.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = if (isFocused) NetflixRed else TextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    BasicTextField(
-                        value = query,
-                        onValueChange = onQueryChange,
-                        textStyle = TextStyle(
-                            fontSize = 16.sp,
-                            color = TextPrimary
-                        ),
-                        cursorBrush = SolidColor(NetflixRed),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Text,
-                            imeAction = ImeAction.Search
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onSearch = { onSearch(query) }
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(focusRequester),
-                        decorationBox = { innerTextField ->
-                            if (query.isEmpty()) {
-                                Text(
-                                    text = "Search movies, shows, episodes...",
-                                    fontSize = 16.sp,
-                                    color = TextSecondary
-                                )
-                            }
-                            innerTextField()
-                        }
-                    )
-
-                    if (query.isNotEmpty()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(
-                            onClick = { onQueryChange("") },
-                            modifier = Modifier.size(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Clear,
-                                contentDescription = "Clear",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
+            Icon(Icons.Default.Search, null, tint = if (isFocused) Color.White else Color.White.copy(alpha = 0.4f))
+            Spacer(Modifier.width(16.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                textStyle = TextStyle(fontSize = 18.sp, color = Color.White, fontWeight = FontWeight.Medium),
+                cursorBrush = SolidColor(Color(0xFF8B5CF6)),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch(query) }),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) Text("Search movies, shows...", color = Color.White.copy(alpha = 0.3f), fontSize = 18.sp)
+                    inner()
+                }
+            )
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }, Modifier.size(24.dp)) {
+                    Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(18.dp))
                 }
             }
         }
+    }
+}
 
-        @OptIn(ExperimentalComposeUiApi::class)
-        @Composable
-        private fun VoiceSearchButton(
-            onClick: () -> Unit,
-            focusRequester: FocusRequester,
-            modifier: Modifier = Modifier
-        ) {
-            var isFocused by remember { mutableStateOf(false) }
+@Composable
+private fun VoiceSearchButton(
+    onClick: () -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
-            Card(
-                modifier = modifier
-                    .size(56.dp)
-                    .focusable()
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { isFocused = it.isFocused }
-                    .clickable { onClick() }
-                    .tvIconFocusIndicator(),
-                colors = CardDefaults.cardColors(
-                    containerColor = NetflixRed
-                ),
-                shape = CircleShape
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = "Voice Search",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.size(60.dp).focusRequester(focusRequester).focusable(interactionSource = interactionSource),
+        color = if (isFocused) Color.White else Color(0xFF8B5CF6),
+        contentColor = if (isFocused) Color.Black else Color.White,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, if (isFocused) Color.White else Color.White.copy(alpha = 0.2f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Mic, null, modifier = Modifier.size(28.dp))
         }
+    }
+}
 
-        @Composable
-        private fun SearchResultsGrid(
-            results: List<SearchResult>,
-            onResultClick: (SearchResult) -> Unit,
-            focusRequester: FocusRequester,
-            modifier: Modifier = Modifier,
-            isMobile: Boolean = false,
-            onLoadMore: () -> Unit = {},
-            onBottomNavVisibilityChange: (Boolean) -> Unit = {}
+@Composable
+private fun SearchSuggestions(
+    onSuggestionClick: (String) -> Unit,
+    searchBarFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+    isMobile: Boolean = false
+) {
+    Column(modifier = modifier.padding(horizontal = if (isMobile) 24.dp else 48.dp)) {
+        Text("POPULAR SEARCHES", fontSize = 14.sp, fontWeight = FontWeight.Black, color = Color.White.copy(alpha = 0.5f), letterSpacing = 2.sp)
+        Spacer(Modifier.height(24.dp))
+
+        val popular = listOf("Action", "Comedy", "Thriller", "Marvel", "Star Wars", "Horror", "Documentary", "Kids")
+        
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(if (isMobile) 2 else 4),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth().height(if (isMobile) 240.dp else 120.dp)
         ) {
-            val gridState = rememberLazyGridState()
-
-            // Detect when user scrolls near the end to load more results
-            LaunchedEffect(gridState) {
-                snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
-                    .collect { lastVisibleIndex ->
-                        if (lastVisibleIndex != null && results.isNotEmpty()) {
-                            // Load more when within 10 items of the end
-                            if (lastVisibleIndex >= results.size - 10) {
-                                onLoadMore()
-                            }
-                        }
-                    }
-            }
-
-            // Scroll detection for auto-hiding bottom nav (mobile only)
-            if (isMobile) {
-                LaunchedEffect(gridState) {
-                    var previousFirstVisibleItemIndex = gridState.firstVisibleItemIndex
-                    var previousFirstVisibleItemScrollOffset = gridState.firstVisibleItemScrollOffset
-
-                    snapshotFlow {
-                        Pair(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
-                    }.collect { (currentIndex, currentOffset) ->
-                        // Determine scroll direction
-                        val isScrollingDown = when {
-                            currentIndex > previousFirstVisibleItemIndex -> true
-                            currentIndex < previousFirstVisibleItemIndex -> false
-                            else -> currentOffset > previousFirstVisibleItemScrollOffset
-                        }
-
-                        // Show nav when at top, hide when scrolling down, show when scrolling up
-                        val isVisible = when {
-                            currentIndex == 0 && currentOffset < 100 -> true  // Always show at top
-                            isScrollingDown -> false  // Hide when scrolling down
-                            else -> true  // Show when scrolling up
-                        }
-
-                        onBottomNavVisibilityChange(isVisible)
-
-                        previousFirstVisibleItemIndex = currentIndex
-                        previousFirstVisibleItemScrollOffset = currentOffset
-                    }
-                }
-            }
-
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(if (isMobile) 3 else 6),
-                state = gridState,
-                contentPadding = PaddingValues(
-                    start = if (isMobile) 16.dp else 32.dp,
-                    end = if (isMobile) 16.dp else 32.dp,
-                    bottom = if (isMobile) 80.dp else 32.dp // Always add space for bottom nav overlay on mobile
-                ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = modifier
-                    .let { mod ->
-                        if (isMobile) {
-                            mod
-                        } else {
-                            mod.focusRequester(focusRequester)
-                        }
-                    }
-            ) {
-                items(results) { result ->
-                    SearchResultCard(
-                        result = result,
-                        onClick = { onResultClick(result) },
-                        isMobile = isMobile
-                    )
-                }
-            }
-        }
-
-        @OptIn(ExperimentalComposeUiApi::class)
-        @Composable
-        private fun SearchResultCard(
-            result: SearchResult,
-            onClick: () -> Unit,
-            modifier: Modifier = Modifier,
-            isMobile: Boolean = false
-        ) {
-            var isFocused by remember { mutableStateOf(false) }
-            val interactionSource = remember { MutableInteractionSource() }
-
-            Card(
-                modifier = modifier
-                    .aspectRatio(2f / 3f)
-                    .clickable(
-                        interactionSource = interactionSource,
-                        indication = null
-                    ) { onClick() }
-                    .focusable(interactionSource = interactionSource)
-                    .onFocusChanged { isFocused = it.isFocused }
-                    .animatedPosterBorder(
-                        shape = RoundedCornerShape(8.dp),
-                        borderWidth = 3.dp,
-                        interactionSource = interactionSource
-                    )
-                    .tvCardFocusIndicator(),
-                colors = CardDefaults.cardColors(
-                    containerColor = BackgroundCard
-                ),
-                elevation = CardDefaults.cardElevation(
-                    defaultElevation = if (isFocused) 8.dp else 4.dp
-                ),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // Poster/Thumbnail
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(NetflixDarkGray)
-                    ) {
-                        result.thumb?.let { thumbUrl ->
-                            AsyncImage(
-                                model = thumbUrl,
-                                contentDescription = result.title,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-
-                        // Gradient overlay for text readability
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(
-                                        colors = listOf(
-                                            Color.Transparent,
-                                            Color.Transparent,
-                                            Color.Transparent,
-                                            BackgroundOverlay
-                                        ),
-                                        startY = 0f,
-                                        endY = Float.POSITIVE_INFINITY
-                                    )
-                                )
-                        )
-
-
-                    }
-                }
-            }
-        }
-
-        @Composable
-        private fun SearchSuggestions(
-            onSuggestionClick: (String) -> Unit,
-            searchBarFocusRequester: FocusRequester,
-            modifier: Modifier = Modifier
-        ) {
-            Column(
-                modifier = modifier.padding(horizontal = 32.dp, vertical = 16.dp)
-            ) {
-                Text(
-                    text = "Popular Searches",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                val popularSearches = listOf(
-                    "Action",
-                    "Comedy",
-                    "Marvel",
-                    "Star Wars",
-                    "Horror",
-                    "Documentary",
-                    "Kids",
-                    "Thriller"
-                )
-
-                // Create individual focus requesters for each suggestion chip
-                val chipFocusRequesters = remember {
-                    popularSearches.map { FocusRequester() }
-                }
-
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    itemsIndexed(popularSearches) { index, suggestion ->
-                        val isFirstRow = index < 4 // First row indices: 0, 1, 2, 3
-
-                        SuggestionChip(
-                            text = suggestion,
-                            onClick = { onSuggestionClick(suggestion) },
-                            focusRequester = chipFocusRequesters[index],
-                            modifier = Modifier.focusProperties {
-                                // First row should navigate UP to search bar
-                                if (isFirstRow) {
-                                    up = searchBarFocusRequester
-                                }
-                                // Navigation within the grid (left/right handled automatically)
-                                // Down navigation handled automatically by LazyVerticalGrid
-                            }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Text(
-                    text = "Search Tips",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    SearchTip(
-                        icon = Icons.Default.Mic,
-                        title = "Voice Search",
-                        description = "Use the microphone button for hands-free searching"
-                    )
-                    SearchTip(
-                        icon = Icons.Default.Movie,
-                        title = "Search by Genre",
-                        description = "Try 'action' or 'comedy'"
-                    )
-                    SearchTip(
-                        icon = Icons.Default.Star,
-                        title = "Search by Actor",
-                        description = "Find content featuring your favorite actors"
-                    )
-                }
-            }
-        }
-
-        @OptIn(ExperimentalComposeUiApi::class)
-        @Composable
-        private fun SuggestionChip(
-            text: String,
-            onClick: () -> Unit,
-            focusRequester: FocusRequester,
-            modifier: Modifier = Modifier
-        ) {
-            val interactionSource = remember { MutableInteractionSource() }
-
-            Card(
-                modifier = modifier
-                    .animatedPosterBorder(
-                        shape = RoundedCornerShape(20.dp),
-                        interactionSource = interactionSource
-                    )
-                    .tvIconFocusIndicator()
-                    .focusRequester(focusRequester)
-                    .clickable { onClick() },
-                colors = CardDefaults.cardColors(
-                    containerColor = BackgroundCard
-                ),
-                shape = RoundedCornerShape(20.dp)
-            ) {
-                Text(
-                    text = text,
-                    fontSize = 12.sp,
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            itemsIndexed(popular) { index, suggestion ->
+                val requester = remember { FocusRequester() }
+                SuggestionChip(
+                    text = suggestion,
+                    onClick = { onSuggestionClick(suggestion) },
+                    focusRequester = requester,
+                    modifier = Modifier.focusProperties { if (index < 4) up = searchBarFocusRequester }
                 )
             }
         }
+    }
+}
 
-        @Composable
-        private fun SearchTip(
-            icon: ImageVector,
-            title: String,
-            description: String,
-            modifier: Modifier = Modifier
-        ) {
-            Row(
-                verticalAlignment = Alignment.Top,
-                modifier = modifier.padding(vertical = 4.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = NetflixRed,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .padding(top = 2.dp)
-                )
+@Composable
+private fun SuggestionChip(
+    text: String,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
-                Spacer(modifier = Modifier.width(12.dp))
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(48.dp).focusRequester(focusRequester).focusable(interactionSource = interactionSource),
+        color = Color(0xFF1A1C2E).copy(alpha = if (isFocused) 0.9f else 0.5f),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, if (isFocused) Color.White else Color.White.copy(alpha = 0.1f))
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 24.dp)) {
+            Text(text, color = if (isFocused) Color.White else Color.White.copy(alpha = 0.7f), fontWeight = FontWeight.Bold)
+        }
+    }
+}
 
-                Column {
-                    Text(
-                        text = title,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = description,
-                        fontSize = 12.sp,
-                        color = TextSecondary,
-                        lineHeight = 16.sp
-                    )
-                }
+@Composable
+private fun SearchResultsGrid(
+    results: List<SearchResult>,
+    onResultClick: (SearchResult) -> Unit,
+    focusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+    isMobile: Boolean = false,
+    onLoadMore: () -> Unit = {},
+    onBottomNavVisibilityChange: (Boolean) -> Unit = {}
+) {
+    val gridState = rememberLazyGridState()
+
+    LaunchedEffect(gridState) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }.collect { idx ->
+            if (idx != null && results.isNotEmpty() && idx >= results.size - 10) onLoadMore()
+        }
+    }
+
+    if (isMobile) {
+        LaunchedEffect(gridState) {
+            var prevIdx = gridState.firstVisibleItemIndex
+            var prevOffset = gridState.firstVisibleItemScrollOffset
+            snapshotFlow { Pair(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) }.collect { (idx, offset) ->
+                val down = if (idx != prevIdx) idx > prevIdx else offset > prevOffset
+                onBottomNavVisibilityChange(idx == 0 && offset < 100 || !down)
+                prevIdx = idx; prevOffset = offset
             }
         }
+    }
 
-        @Composable
-        private fun MobileSuggestionChip(
-            text: String,
-            onClick: () -> Unit,
-            modifier: Modifier = Modifier
-        ) {
-            Card(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .clickable { onClick() },
-                colors = CardDefaults.cardColors(
-                    containerColor = BackgroundCard
-                ),
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(if (isMobile) 3 else 6),
+        state = gridState,
+        contentPadding = PaddingValues(start = if (isMobile) 24.dp else 48.dp, end = if (isMobile) 24.dp else 48.dp, bottom = 100.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        modifier = modifier.then(if (!isMobile) Modifier.focusRequester(focusRequester) else Modifier)
+    ) {
+        itemsIndexed(results) { index, result ->
+            SearchResultCard(
+                result = result, 
+                onClick = { onResultClick(result) },
+                delayIndex = index % 12
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCard(
+    result: SearchResult,
+    onClick: () -> Unit,
+    delayIndex: Int
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val soundManager = remember { com.purestream.utils.SoundManager.getInstance(context) }
+    
+    var visible by remember { mutableStateOf(false) }
+    val alpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(600, delayMillis = delayIndex * 50),
+        label = "card_alpha"
+    )
+    LaunchedEffect(Unit) { visible = true }
+
+    Card(
+        modifier = Modifier
+            .aspectRatio(2f / 3f)
+            .graphicsLayer { this.alpha = alpha }
+            .hoverable(interactionSource)
+            .focusable(interactionSource = interactionSource)
+            .clickable(interactionSource = interactionSource, indication = null) { 
+                soundManager.playSound(com.purestream.utils.SoundManager.Sound.CLICK)
+                onClick() 
+            }
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) Color.White else Color.White.copy(alpha = 0.05f),
                 shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(
-                    text = text,
-                    fontSize = 14.sp,
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                )
+            ),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(result.thumb, null, Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop)
+            if (isFocused) {
+                Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.1f)))
             }
         }
+    }
+}

@@ -48,6 +48,7 @@ data class ContentItem(
     val type: ContentType,
     val thumbUrl: String?, // Movie poster/thumbnail
     val artUrl: String?, // Movie background art
+    val logoUrl: String? = null, // Movie logo art
     val summary: String?,
     val year: Int?,
     val rating: Float?,

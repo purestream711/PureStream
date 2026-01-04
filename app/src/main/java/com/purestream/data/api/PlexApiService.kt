@@ -50,13 +50,17 @@ interface PlexApiService {
     @GET("library/metadata/{itemId}")
     suspend fun getMovieDetails(
         @Path("itemId") itemId: String,
-        @Header("X-Plex-Token") token: String
+        @Header("X-Plex-Token") token: String,
+        @Query("includeImages") includeImages: Int = 1,
+        @Query("includeExtras") includeExtras: Int = 1
     ): Response<PlexResponse<Movie>>
     
     @GET("library/metadata/{itemId}")
     suspend fun getTvShowDetails(
         @Path("itemId") itemId: String,
-        @Header("X-Plex-Token") token: String
+        @Header("X-Plex-Token") token: String,
+        @Query("includeImages") includeImages: Int = 1,
+        @Query("includeExtras") includeExtras: Int = 1
     ): Response<PlexResponse<TvShow>>
     
     @GET("library/metadata/{episodeId}")

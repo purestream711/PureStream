@@ -18,6 +18,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +38,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -48,6 +51,8 @@ import com.purestream.navigation.Destinations
 import com.purestream.ui.screens.*
 import com.purestream.ui.theme.PureStreamTheme
 import com.purestream.ui.viewmodel.HomeViewModel
+import com.purestream.ui.viewmodel.MoviesViewModel
+import com.purestream.ui.viewmodel.TvShowsViewModel
 import com.purestream.ui.viewmodel.ProfileSelectionViewModel
 import com.purestream.data.manager.PremiumStatusManager
 import com.purestream.data.manager.PremiumStatusState
@@ -121,12 +126,19 @@ class MainActivity : ComponentActivity() {
             var shouldResetApp by remember { mutableStateOf(false) }
             var shouldRefreshData by remember { mutableStateOf(false) }
 
+            // Detect if app was restored after process death
+            // When Android kills the process and restores it, savedInstanceState will be non-null
+            val wasRestoredAfterProcessDeath = savedInstanceState != null
+            if (wasRestoredAfterProcessDeath) {
+                android.util.Log.w("MainActivity", "App was restored after process death - will redirect to profile selection")
+            }
+
             // Set up the reset callbacks
             LaunchedEffect(Unit) {
                 onResetRequired = { shouldResetApp = true }
                 onDataRefreshRequired = { shouldRefreshData = true }
             }
-            
+
             PureStreamTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -136,7 +148,8 @@ class MainActivity : ComponentActivity() {
                         shouldResetApp = shouldResetApp,
                         onResetHandled = { shouldResetApp = false },
                         shouldRefreshData = shouldRefreshData,
-                        onDataRefreshHandled = { shouldRefreshData = false }
+                        onDataRefreshHandled = { shouldRefreshData = false },
+                        wasRestoredAfterProcessDeath = wasRestoredAfterProcessDeath
                     )
                 }
             }
@@ -184,14 +197,6 @@ class MainActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_RIGHT -> {
                 // Give component-level sound handling priority, but add global fallback
                 android.util.Log.i("MainActivity", "D-pad movement detected: $keyCode")
-                // Play move sound as fallback if components don't handle it
-                android.util.Log.d("MainActivity", "Global fallback - playing MOVE sound")
-                soundManager.playSound(SoundManager.Sound.MOVE)
-                return super.onKeyDown(keyCode, event)
-            }
-            KeyEvent.KEYCODE_BACK -> {
-                android.util.Log.d("MainActivity", "Back key detected, playing back sound")
-                soundManager.playSound(SoundManager.Sound.BACK)
                 return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_DPAD_CENTER,
@@ -425,26 +430,48 @@ fun PureStreamApp(
     shouldResetApp: Boolean = false,
     onResetHandled: () -> Unit = {},
     shouldRefreshData: Boolean = false,
-    onDataRefreshHandled: () -> Unit = {}
+    onDataRefreshHandled: () -> Unit = {},
+    wasRestoredAfterProcessDeath: Boolean = false
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val plexRepository = remember { com.purestream.data.repository.PlexRepository(context) }
+    var libraryRefreshRequired by remember { mutableStateOf(false) }
     
     // Shared repositories
     val sharedPlexAuthRepository = remember { com.purestream.data.repository.PlexAuthRepository(context) }
     val sharedProfileRepository = remember { ProfileRepository(context) }
     val database = remember { AppDatabase.getDatabase(context) }
+    val sharedWatchProgressRepository = remember { com.purestream.data.repository.WatchProgressRepository(database, context) }
     val subtitleAnalysisRepository = remember { SubtitleAnalysisRepository(database, context) }
     val profanityFilter = remember { ProfanityFilter() }
     val openSubtitlesRepository = remember { OpenSubtitlesRepository(profanityFilter, subtitleAnalysisRepository) }
     
     // Shared ViewModels to prevent recreation and improve performance
-    val sharedHomeViewModel: HomeViewModel = viewModel { HomeViewModel(context = context, profileRepository = sharedProfileRepository) }
-    val sharedMoviesViewModel: com.purestream.ui.viewmodel.MoviesViewModel = viewModel { com.purestream.ui.viewmodel.MoviesViewModel(context = context) }
-    val sharedTvShowsViewModel: com.purestream.ui.viewmodel.TvShowsViewModel = viewModel { com.purestream.ui.viewmodel.TvShowsViewModel(context = context) }
+    val sharedHomeViewModel: HomeViewModel = viewModel { 
+        HomeViewModel(
+            context = context, 
+            plexRepository = plexRepository,
+            profileRepository = sharedProfileRepository
+        ) 
+    }
+    val sharedMoviesViewModel: com.purestream.ui.viewmodel.MoviesViewModel = viewModel { 
+        com.purestream.ui.viewmodel.MoviesViewModel(
+            context = context,
+            plexRepository = plexRepository
+        ) 
+    }
+    val sharedTvShowsViewModel: com.purestream.ui.viewmodel.TvShowsViewModel = viewModel { 
+        com.purestream.ui.viewmodel.TvShowsViewModel(
+            context = context,
+            plexRepository = plexRepository
+        ) 
+    }
     val sharedHeroMovieDetailsViewModel: com.purestream.ui.viewmodel.MovieDetailsViewModel = viewModel {
         com.purestream.ui.viewmodel.MovieDetailsViewModel(
             context = context,
+            plexRepository = plexRepository,
             openSubtitlesRepository = openSubtitlesRepository,
             subtitleAnalysisRepository = subtitleAnalysisRepository
         )
@@ -456,7 +483,36 @@ fun PureStreamApp(
         PlexAuthViewModel(context.applicationContext as Application)
     }
     val sharedMediaPlayerViewModel: com.purestream.ui.viewmodel.MediaPlayerViewModel = viewModel {
-        com.purestream.ui.viewmodel.MediaPlayerViewModel(context)
+        com.purestream.ui.viewmodel.MediaPlayerViewModel(
+            context = context,
+            plexRepository = plexRepository
+        )
+    }
+    val sharedTvShowDetailsViewModel: com.purestream.ui.viewmodel.TvShowDetailsViewModel = viewModel {
+        com.purestream.ui.viewmodel.TvShowDetailsViewModel(
+            context = context,
+            plexRepository = plexRepository,
+            openSubtitlesRepository = openSubtitlesRepository,
+            subtitleAnalysisRepository = subtitleAnalysisRepository
+        )
+    }
+
+    // Handle process death restoration
+    // When Android kills the app process and restores it (e.g., after TV is turned off for hours),
+    // ViewModels are recreated with empty state but navigation is restored to the previous screen.
+    // This causes broken screens with no data. We redirect to ProfileSelection to properly reinitialize.
+    LaunchedEffect(wasRestoredAfterProcessDeath) {
+        if (wasRestoredAfterProcessDeath) {
+            android.util.Log.w("MainActivity", "Process death detected - redirecting to ProfileSelection to reinitialize app state")
+
+            // Clear any stale ViewModel data
+            sharedHomeViewModel.clearData()
+
+            // Navigate to ProfileSelection (Plex auth token should still be valid)
+            navController.navigate(Destinations.PROFILE_SELECTION) {
+                popUpTo(0) { inclusive = true }
+            }
+        }
     }
 
     // Handle background reset
@@ -587,9 +643,15 @@ fun PureStreamApp(
                     navController.navigate(Destinations.PLEX_WEB_AUTH)
                 },
                 onDemoModeClick = {
-                    android.util.Log.d("MainActivity", "Demo Mode button clicked - deleting ALL profiles")
+                    android.util.Log.d("MainActivity", "Demo Mode button clicked - clearing ViewModels and deleting ALL profiles")
                     coroutineScope.launch {
                         try {
+                            // Clear all ViewModel states to prevent data leakage
+                            sharedTvShowDetailsViewModel.clearState()
+                            sharedHeroMovieDetailsViewModel.clearState()
+                            android.util.Log.d("MainActivity", "Cleared TvShowDetails and MovieDetails ViewModels")
+
+                            // Delete all profiles
                             sharedProfileRepository.deleteAllProfiles()
                         } catch (e: Exception) {
                             android.util.Log.e("MainActivity", "Failed to delete all profiles: ${e.message}")
@@ -753,11 +815,26 @@ fun PureStreamApp(
 
             val context = LocalContext.current
             val profileRepository = ProfileRepository(context)
-            val profileSelectionViewModel: ProfileSelectionViewModel = viewModel { 
+            val profileSelectionViewModel: ProfileSelectionViewModel = viewModel {
                 ProfileSelectionViewModel(profileRepository, context)
             }
             val profileSelectionState by profileSelectionViewModel.uiState.collectAsStateWithLifecycle()
             val profileManager = ProfileManager.getInstance(context)
+
+            // Refresh profiles from database when returning to this screen (e.g., after editing)
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        android.util.Log.d("MainActivity", "ProfileSelection resumed - reloading profiles")
+                        profileSelectionViewModel.loadProfiles()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
 
             // Get premium status directly from PremiumStatusManager (includes temporary premium from cheat code)
             val premiumStatusManager = remember { com.purestream.data.manager.PremiumStatusManager.getInstance(context) }
@@ -830,20 +907,22 @@ fun PureStreamApp(
         ) { backStackEntry ->
             val profileId = backStackEntry.arguments?.getString("profileId") ?: return@composable
             val context = LocalContext.current
-            
+            val coroutineScope = rememberCoroutineScope()
+
             // Create SettingsViewModel to get premium status
-            val editProfileSettingsViewModel: com.purestream.ui.viewmodel.SettingsViewModel = viewModel { 
-                com.purestream.ui.viewmodel.SettingsViewModel(context) 
+            val editProfileSettingsViewModel: com.purestream.ui.viewmodel.SettingsViewModel = viewModel {
+                com.purestream.ui.viewmodel.SettingsViewModel(context)
             }
             val editProfileSettingsState by editProfileSettingsViewModel.uiState.collectAsStateWithLifecycle()
-            
+
             EditProfileScreen(
                 profileId = profileId,
                 onNavigateBack = {
                     navController.popBackStack()
                 },
                 onProfileUpdated = { profile: Profile ->
-                    // Navigate back to profile selection
+                    // Profile is already saved to database by EditProfileScreen
+                    // ProfileSelectionScreen will reload fresh data when we navigate back
                     navController.popBackStack()
                 },
                 isPremium = editProfileSettingsState.appSettings.isPremium
@@ -983,30 +1062,54 @@ fun PureStreamApp(
                 }
             }
             
-            // Handle hero movie interactions - consolidated
-            LaunchedEffect(heroMovieDetailsState.movie, heroMovieDetailsState.videoUrl) {
-                heroMovieDetailsState.movie?.let { movie ->
-                    // Auto-trigger analysis if not done yet (same as MovieDetailsScreen)
-                    if (heroMovieDetailsState.canAnalyzeProfanity) {
-                        sharedHeroMovieDetailsViewModel.analyzeMovieProfanityAllLevels(movie)
-                    }
+            // Fetch progress for featured content (refreshes when navigating back to HOME)
+            var featuredContentProgress by remember { mutableStateOf<Float?>(null) }
+            var featuredContentPosition by remember { mutableStateOf<Long?>(null) }
+            var progressRefreshTrigger by remember { mutableStateOf(0) }
 
-                    // When movie details are loaded, get the video URL
-                    if (heroMovieDetailsState.videoUrl == null) {
-                        sharedHeroMovieDetailsViewModel.getVideoUrl(movie)
+            // Trigger progress refresh when returning to HOME
+            DisposableEffect(Unit) {
+                val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, _ ->
+                    if (destination.route == Destinations.HOME) {
+                        progressRefreshTrigger++
                     }
                 }
-                
-                heroMovieDetailsState.videoUrl?.let { videoUrl ->
-                    heroMovieDetailsState.movie?.let { movie ->
-                        homeState.featuredMovie?.let { featuredMovie ->
-                            android.util.Log.d("MainActivity", "Navigating to hero movie player with URL: ${videoUrl.take(100)}...")
-                            // Store movie object for tracking before navigation
-                            sharedMediaPlayerViewModel.setCurrentMedia(movie = movie)
-                            navController.navigate(Destinations.mediaPlayerWithUrl(Uri.encode(videoUrl), Uri.encode(movie.title), featuredMovie.id))
-                            sharedHeroMovieDetailsViewModel.clearVideoUrl() // Clear after navigation to prevent restart loop
+                navController.addOnDestinationChangedListener(listener)
+                onDispose {
+                    navController.removeOnDestinationChangedListener(listener)
+                }
+            }
+
+            // Load featured movie into hero ViewModel to check for existing analysis
+            LaunchedEffect(homeState.featuredMovie?.id) {
+                val featuredMovie = homeState.featuredMovie
+                if (featuredMovie != null && featuredMovie.type == com.purestream.data.model.ContentType.MOVIE) {
+                    // Fetch full movie details and load into hero ViewModel
+                    coroutineScope.launch {
+                        val movieResult = plexRepository.getMovieById(featuredMovie.id)
+                        movieResult.getOrNull()?.let { movie ->
+                            sharedHeroMovieDetailsViewModel.setMovie(movie)
+                            sharedHeroMovieDetailsViewModel.checkCanAnalyzeProfanity()
                         }
                     }
+                }
+            }
+
+            LaunchedEffect(homeState.featuredMovie?.id, currentProfile?.id, progressRefreshTrigger) {
+                val profile = currentProfile
+                val movie = homeState.featuredMovie
+                if (movie != null && profile != null) {
+                    val progress = sharedWatchProgressRepository.getProgress(profile.id, movie.id)
+                    if (progress != null && progress.duration > 0) {
+                        featuredContentPosition = progress.position
+                        featuredContentProgress = (progress.position.toFloat() / progress.duration.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        featuredContentProgress = null
+                        featuredContentPosition = null
+                    }
+                } else {
+                    featuredContentProgress = null
+                    featuredContentPosition = null
                 }
             }
             
@@ -1016,6 +1119,9 @@ fun PureStreamApp(
                 featuredContent = homeState.featuredMovie,
                 isLoading = homeState.isLoading,
                 error = homeState.error,
+                featuredContentProgress = featuredContentProgress,
+                featuredContentPosition = featuredContentPosition,
+                canAnalyzeProfanity = heroMovieDetailsState.canAnalyzeProfanity,
                 onSearchClick = { 
                     navController.navigate(Destinations.SEARCH)
                 },
@@ -1039,44 +1145,78 @@ fun PureStreamApp(
                     navController.navigate(Destinations.SETTINGS)
                 },
                 onMoviesClick = {
+                    coroutineScope.launch { sharedMoviesViewModel.gridState.scrollToItem(0) }
+                    sharedMoviesViewModel.clearLastFocusedMovieId()
                     navController.navigate(Destinations.MOVIES)
                 },
                 onTvShowsClick = {
+                    coroutineScope.launch { sharedTvShowsViewModel.gridState.scrollToItem(0) }
+                    sharedTvShowsViewModel.clearLastFocusedTvShowId()
                     navController.navigate(Destinations.TV_SHOWS)
                 },
-                onPlayFeatured = { 
+                onPlayFeatured = { startPosition ->
                     // Directly play the featured movie
-                    homeState.featuredMovie?.let { featuredMovie ->
-                        // First load the full movie details to get the Movie object with media info
-                        sharedHeroMovieDetailsViewModel.loadMovieDetails(featuredMovie.id)
+                    homeState.featuredMovie?.let { featuredContent ->
+                        if (featuredContent.type == com.purestream.data.model.ContentType.MOVIE) {
+                            // Use the movie from heroMovieDetailsViewModel which has analysis info
+                            val heroState = sharedHeroMovieDetailsViewModel.uiState.value
+                            heroState.movie?.let { movie ->
+                                // Auto-trigger analysis in background if not done
+                                if (heroState.canAnalyzeProfanity) {
+                                    sharedHeroMovieDetailsViewModel.analyzeMovieProfanityAllLevels(movie)
+                                }
+
+                                // Set start position
+                                sharedMediaPlayerViewModel.setStartPosition(startPosition)
+
+                                // Store media and navigate instantly
+                                sharedMediaPlayerViewModel.setCurrentMedia(movie = movie)
+                                navController.navigate(Destinations.mediaPlayer(movie.ratingKey, "movie"))
+                            }
+                        } else {
+                            // Handle episodes if featured content is an episode
+                            navController.navigate(Destinations.movieDetails(featuredContent.id))
+                        }
                     }
                 },
                 onRetry = {
                     sharedHomeViewModel.clearError()
                     sharedHomeViewModel.loadContent()
+                },
+                onNavigateToLevelUpStats = {
+                    navController.navigate(Destinations.LEVEL_UP_STATS)
                 }
             )
         }
         
         composable(Destinations.MOVIES) {
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
+            val profileManager = ProfileManager.getInstance(context)
+            val currentProfile by profileManager.currentProfile.collectAsStateWithLifecycle()
             val moviesState by sharedMoviesViewModel.uiState.collectAsStateWithLifecycle()
             val lastFocusedMovieId by sharedMoviesViewModel.lastFocusedMovieId.collectAsStateWithLifecycle()
-            
+
             // Initialize Movies ViewModel with profile-based library filtering (optimized)
-            LaunchedEffect(homeState.currentProfile?.id) { // Only trigger when profile ID changes
-                homeState.currentProfile?.let { profile ->
-                    // Set current profile for library preference tracking
-                    sharedMoviesViewModel.setCurrentProfile(profile)
-                    // Initialize progress tracking FIRST before loading any items
-                    sharedMoviesViewModel.initializeProgressTracking(context, profile.id)
-                    // Then setup Plex connection which will trigger loadItems
-                    setupPlexConnection(sharedPlexAuthRepository, sharedMoviesViewModel, profile)
+            LaunchedEffect(currentProfile?.id, currentProfile?.selectedLibraries) { // Trigger when profile ID OR selected libraries change
+                currentProfile?.let { profile ->
+                    // Only reload if libraries are empty or profile/libraries changed
+                    val needsReload = moviesState.libraries.isEmpty() ||
+                                     sharedMoviesViewModel.getCurrentProfile()?.id != profile.id ||
+                                     sharedMoviesViewModel.getCurrentProfile()?.selectedLibraries != profile.selectedLibraries
+
+                    if (needsReload) {
+                        // Set current profile for library preference tracking
+                        sharedMoviesViewModel.setCurrentProfile(profile)
+                        // Initialize progress tracking FIRST before loading any items
+                        sharedMoviesViewModel.initializeProgressTracking(context, profile.id)
+                        // Then setup Plex connection which will trigger loadItems
+                        setupPlexConnection(sharedPlexAuthRepository, sharedMoviesViewModel, profile)
+                    }
                 }
             }
 
             MoviesScreen(
-                currentProfile = homeState.currentProfile,
+                currentProfile = currentProfile,
                 movies = moviesState.items,
                 libraries = moviesState.libraries,
                 selectedLibraryId = moviesState.selectedLibraryId,
@@ -1094,6 +1234,8 @@ fun PureStreamApp(
                     navController.navigate(Destinations.HOME)
                 },
                 onTvShowsClick = {
+                    coroutineScope.launch { sharedTvShowsViewModel.gridState.scrollToItem(0) }
+                    sharedTvShowsViewModel.clearLastFocusedTvShowId()
                     navController.navigate(Destinations.TV_SHOWS)
                 },
                 onSettingsClick = {
@@ -1128,20 +1270,29 @@ fun PureStreamApp(
         
         composable(Destinations.TV_SHOWS) {
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
+            val profileManager = ProfileManager.getInstance(context)
+            val currentProfile by profileManager.currentProfile.collectAsStateWithLifecycle()
             val tvShowsState by sharedTvShowsViewModel.uiState.collectAsStateWithLifecycle()
             val lastFocusedTvShowId by sharedTvShowsViewModel.lastFocusedTvShowId.collectAsStateWithLifecycle()
-            
+
             // Initialize TV Shows ViewModel with profile-based library filtering (optimized)
-            LaunchedEffect(homeState.currentProfile?.id) { // Only trigger when profile ID changes
-                homeState.currentProfile?.let { profile ->
-                    // Set current profile for library preference tracking
-                    sharedTvShowsViewModel.setCurrentProfile(profile)
-                    setupPlexConnection(sharedPlexAuthRepository, sharedTvShowsViewModel, profile)
+            LaunchedEffect(currentProfile?.id, currentProfile?.selectedLibraries) { // Trigger when profile ID OR selected libraries change
+                currentProfile?.let { profile ->
+                    // Only reload if libraries are empty or profile/libraries changed
+                    val needsReload = tvShowsState.libraries.isEmpty() ||
+                                     sharedTvShowsViewModel.getCurrentProfile()?.id != profile.id ||
+                                     sharedTvShowsViewModel.getCurrentProfile()?.selectedLibraries != profile.selectedLibraries
+
+                    if (needsReload) {
+                        // Set current profile for library preference tracking
+                        sharedTvShowsViewModel.setCurrentProfile(profile)
+                        setupPlexConnection(sharedPlexAuthRepository, sharedTvShowsViewModel, profile)
+                    }
                 }
             }
 
             TvShowsScreen(
-                currentProfile = homeState.currentProfile,
+                currentProfile = currentProfile,
                 tvShows = tvShowsState.items,
                 libraries = tvShowsState.libraries,
                 selectedLibraryId = tvShowsState.selectedLibraryId,
@@ -1156,6 +1307,8 @@ fun PureStreamApp(
                     navController.navigate(Destinations.HOME)
                 },
                 onMoviesClick = {
+                    coroutineScope.launch { sharedMoviesViewModel.gridState.scrollToItem(0) }
+                    sharedMoviesViewModel.clearLastFocusedMovieId()
                     navController.navigate(Destinations.MOVIES)
                 },
                 onSettingsClick = {
@@ -1189,6 +1342,43 @@ fun PureStreamApp(
             )
         }
         
+        composable(Destinations.LEVEL_UP_STATS) {
+            val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
+            val currentProfile = homeState.currentProfile
+            
+            var filthiestMovieTitle by remember { mutableStateOf<String?>(null) }
+            val context = LocalContext.current
+            
+            LaunchedEffect(Unit) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        val db = AppDatabase.getDatabase(context)
+                        val repo = SubtitleAnalysisRepository(db, context)
+                        val title = repo.getFilthiestMovieTitle()
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            filthiestMovieTitle = title
+                        }
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                }
+            }
+            
+            if (currentProfile != null) {
+                com.purestream.ui.components.LevelUpStatCard(
+                    profile = currentProfile,
+                    filthiestMovieTitle = filthiestMovieTitle,
+                    onDismiss = {
+                        navController.popBackStack()
+                    }
+                )
+            } else {
+                LaunchedEffect(Unit) {
+                    navController.popBackStack()
+                }
+            }
+        }
+
         composable(Destinations.SETTINGS) {
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
             val coroutineScope = rememberCoroutineScope()
@@ -1218,7 +1408,17 @@ fun PureStreamApp(
             val premiumStatusManager = remember { PremiumStatusManager.getInstance(context) }
             val premiumStatus by premiumStatusManager.premiumStatus.collectAsStateWithLifecycle()
             
+            val watchProgressRepository = remember { com.purestream.data.repository.WatchProgressRepository(database, context) }
+            val achievementManager = remember { com.purestream.data.manager.AchievementManager(context, sharedProfileRepository, watchProgressRepository, database) }
+
             LaunchedEffect(premiumStatus) {
+                // Check Power User achievement when becoming Premium
+                if (premiumStatus is PremiumStatusState.Premium) {
+                    homeState.currentProfile?.let { profile ->
+                        achievementManager.checkPowerUser(profile.id)
+                    }
+                }
+
                 // When premium status changes (especially from Premium to Free), refresh profile data
                 if (premiumStatus is PremiumStatusState.Free || premiumStatus is PremiumStatusState.Premium) {
                     android.util.Log.w("MainActivity", "Premium status changed to $premiumStatus, syncing profile data...")
@@ -1320,9 +1520,13 @@ fun PureStreamApp(
                     navController.navigate(Destinations.HOME)
                 },
                 onMoviesClick = {
+                    coroutineScope.launch { sharedMoviesViewModel.gridState.scrollToItem(0) }
+                    sharedMoviesViewModel.clearLastFocusedMovieId()
                     navController.navigate(Destinations.MOVIES)
                 },
                 onTvShowsClick = {
+                    coroutineScope.launch { sharedTvShowsViewModel.gridState.scrollToItem(0) }
+                    sharedTvShowsViewModel.clearLastFocusedTvShowId()
                     navController.navigate(Destinations.TV_SHOWS)
                 },
                 onSwitchUser = {
@@ -1356,15 +1560,11 @@ fun PureStreamApp(
                         val profileManager = ProfileManager.getInstance(context)
                         coroutineScope.launch {
                             profileManager.setCurrentProfile(updatedProfile)
-                        }
-                        
-                        val profileRepository = com.purestream.data.repository.ProfileRepository(context)
-                        coroutineScope.launch {
-                            try {
-                                profileRepository.updateProfile(updatedProfile)
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainActivity", "Failed to update profile: ${e.message}")
-                            }
+                            sharedProfileRepository.updateProfile(updatedProfile)
+
+                            // Force-reset the ViewModels to ensure they reload on next navigation
+                            sharedMoviesViewModel.reset()
+                            sharedTvShowsViewModel.reset()
                         }
                     }
                 },
@@ -1506,7 +1706,6 @@ fun PureStreamApp(
                     // Note: Don't clear profile cache - user keeps profile after re-login
 
                     android.util.Log.d("MainActivity", "Navigating to CONNECT_PLEX with popUpTo(0)")
-                    android.util.Log.d("MainActivity", "Current backstack before navigation: ${navController.currentBackStack.value.map { it.destination.route }}")
 
                     // Clear the entire back stack and navigate to CONNECT_PLEX as the only screen
                     navController.navigate(Destinations.CONNECT_PLEX) {
@@ -1567,10 +1766,12 @@ fun PureStreamApp(
                         val profileManager = ProfileManager.getInstance(context)
                         profileManager.setCurrentProfile(updatedProfile)
 
-                        // Then update HomeViewModel and reload content
+                        // Then update HomeViewModel (which triggers loadContent internally)
                         sharedHomeViewModel.setCurrentProfile(updatedProfile)
-                        sharedHomeViewModel.loadContent()
                     }
+                },
+                onNavigateToLevelUpStats = {
+                    navController.navigate(Destinations.LEVEL_UP_STATS)
                 }
             )
         }
@@ -1649,9 +1850,13 @@ fun PureStreamApp(
                     navController.navigate(Destinations.HOME)
                 },
                 onMoviesClick = {
+                    coroutineScope.launch { sharedMoviesViewModel.gridState.scrollToItem(0) }
+                    sharedMoviesViewModel.clearLastFocusedMovieId()
                     navController.navigate(Destinations.MOVIES)
                 },
                 onTvShowsClick = {
+                    coroutineScope.launch { sharedTvShowsViewModel.gridState.scrollToItem(0) }
+                    sharedTvShowsViewModel.clearLastFocusedTvShowId()
                     navController.navigate(Destinations.TV_SHOWS)
                 },
                 onSettingsClick = {
@@ -1681,33 +1886,39 @@ fun PureStreamApp(
             val context = LocalContext.current
             
             // Create shared MoviesViewModel to get the movie data
-            val moviesViewModel: com.purestream.ui.viewmodel.MoviesViewModel = viewModel {
-                com.purestream.ui.viewmodel.MoviesViewModel(context = context)
-            }
-            val moviesState by moviesViewModel.uiState.collectAsStateWithLifecycle()
+            val moviesCacheViewModel = sharedMoviesViewModel
 
             // Create MovieDetailsViewModel instance with shared repositories
             val movieDetailsViewModel: com.purestream.ui.viewmodel.MovieDetailsViewModel = viewModel {
                 com.purestream.ui.viewmodel.MovieDetailsViewModel(
                     context = context,
+                    plexRepository = plexRepository,
                     openSubtitlesRepository = openSubtitlesRepository,
                     subtitleAnalysisRepository = subtitleAnalysisRepository
                 )
             }
             val movieDetailsState by movieDetailsViewModel.uiState.collectAsStateWithLifecycle()
 
-            // Create SettingsViewModel to get premium status
-            val movieDetailsSettingsViewModel: com.purestream.ui.viewmodel.SettingsViewModel = viewModel {
-                com.purestream.ui.viewmodel.SettingsViewModel(context)
+            // Pre-populate with movie from cache for instant loading
+            LaunchedEffect(movieId) {
+                val movieFromCache = moviesCacheViewModel.uiState.value.items.find { movieItem -> movieItem.ratingKey == movieId }
+                if (movieFromCache != null && movieDetailsViewModel.uiState.value.movie == null) {
+                    android.util.Log.d("MainActivity", "Pre-populating movie details from cache for: ${movieFromCache.title}")
+                    movieDetailsViewModel.setMovie(movieFromCache)
+                }
             }
-            val movieDetailsSettingsState by movieDetailsSettingsViewModel.uiState.collectAsStateWithLifecycle()
+
+            // Get premium status directly from PremiumStatusManager (source of truth)
+            val premiumStatusManager = remember { com.purestream.data.manager.PremiumStatusManager.getInstance(context) }
+            val premiumStatusState by premiumStatusManager.premiumStatus.collectAsStateWithLifecycle()
+            val isPremium = premiumStatusState is com.purestream.data.manager.PremiumStatusState.Premium
 
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
-            val currentProfile = homeState.currentProfile
+            val activeProfile: com.purestream.data.model.Profile? = homeState.currentProfile
 
             // Initialize progress tracking FIRST before loading any content
-            LaunchedEffect(currentProfile?.id) {
-                currentProfile?.let { profile ->
+            LaunchedEffect(activeProfile?.id) {
+                activeProfile?.let { profile ->
                     movieDetailsViewModel.initializeProgressTracking(context, profile.id)
                 }
             }
@@ -1732,28 +1943,41 @@ fun PureStreamApp(
                 }
             }
             
+            // Refresh progress when returning to this screen
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        android.util.Log.d("MainActivity", "MovieDetails resumed - refreshing progress")
+                        movieDetailsViewModel.refreshProgress()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
+
             // Get the movie from the details view model
             val movie = movieDetailsState.movie
             
             if (movie != null) {
-                val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
-                val currentProfile = homeState.currentProfile
-                val currentFilterLevel = currentProfile?.profanityFilterLevel 
-                    ?: com.purestream.data.model.ProfanityFilterLevel.MILD
-                
                 MovieDetailsScreen(
                     movie = movie,
                     progressPercentage = movieDetailsState.progressPercentage,
                     progressPosition = movieDetailsState.progressPosition,
                     onPlayClick = { startPosition ->
-                        // Store start position in MediaPlayerViewModel before navigation
+                        // Store start position and media before navigation
                         sharedMediaPlayerViewModel.setStartPosition(startPosition)
-                        // Auto-trigger analysis if not done yet
+                        sharedMediaPlayerViewModel.setCurrentMedia(movie = movie)
+                        
+                        // Auto-trigger analysis in background if not done
                         if (movieDetailsState.canAnalyzeProfanity) {
                             movieDetailsViewModel.analyzeMovieProfanityAllLevels(movie)
                         }
-                        // Always proceed with video URL generation immediately
-                        movieDetailsViewModel.getVideoUrl(movie)
+                        
+                        // NAVIGATE INSTANTLY - the player will fetch the URL while the screen is opening
+                        navController.navigate(Destinations.mediaPlayer(movie.ratingKey, "movie"))
                     },
                     onBackClick = {
                         navController.popBackStack()
@@ -1769,21 +1993,10 @@ fun PureStreamApp(
                         movieDetailsViewModel.clearSubtitleAnalysisError()
                     },
                     canAnalyzeProfanity = movieDetailsState.canAnalyzeProfanity,
-                    currentProfile = currentProfile,
-                    isPremium = movieDetailsSettingsState.appSettings.isPremium,
+                    currentProfile = activeProfile,
+                    isPremium = isPremium,
                     isDemoMode = com.purestream.data.demo.DemoData.isDemoToken(sharedPlexAuthRepository.getAuthToken())
                 )
-                
-                // Handle video URL result
-                LaunchedEffect(movieDetailsState.videoUrl) {
-                    movieDetailsState.videoUrl?.let { videoUrl ->
-                        android.util.Log.d("MainActivity", "Navigating to media player with URL: ${videoUrl.take(100)}...")
-                        // Store movie object for tracking before navigation
-                        sharedMediaPlayerViewModel.setCurrentMedia(movie = movie)
-                        navController.navigate(Destinations.mediaPlayerWithUrl(Uri.encode(videoUrl), Uri.encode(movie.title), movie.ratingKey))
-                        movieDetailsViewModel.clearVideoUrl() // Clear after navigation to prevent restart loop
-                    }
-                }
                 
                 // Show video error if any
                 movieDetailsState.videoError?.let { error ->
@@ -1908,27 +2121,25 @@ fun PureStreamApp(
             val showId = backStackEntry.arguments?.getString("showId") ?: return@composable
             val context = LocalContext.current
             
-            // Create shared TvShowsViewModel to get the TV show data
-            val tvShowsViewModel: com.purestream.ui.viewmodel.TvShowsViewModel = viewModel {
-                com.purestream.ui.viewmodel.TvShowsViewModel(context = context)
-            }
-            val tvShowsState by tvShowsViewModel.uiState.collectAsStateWithLifecycle()
-
-            // Create TvShowDetailsViewModel instance with shared repositories
-            val tvShowDetailsViewModel: com.purestream.ui.viewmodel.TvShowDetailsViewModel = viewModel {
-                com.purestream.ui.viewmodel.TvShowDetailsViewModel(
-                    context = context,
-                    openSubtitlesRepository = openSubtitlesRepository,
-                    subtitleAnalysisRepository = subtitleAnalysisRepository
-                )
-            }
+            // Use shared ViewModels
+            val tvShowsCacheViewModel = sharedTvShowsViewModel
+            val tvShowDetailsViewModel = sharedTvShowDetailsViewModel
             val tvShowDetailsState by tvShowDetailsViewModel.uiState.collectAsStateWithLifecycle()
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
-            val currentProfile = homeState.currentProfile
+            val activeProfile: com.purestream.data.model.Profile? = homeState.currentProfile
+
+            // Pre-populate with TV show from cache for instant loading
+            LaunchedEffect(showId) {
+                val showFromCache = tvShowsCacheViewModel.uiState.value.items.find { show -> show.ratingKey == showId }
+                if (showFromCache != null && tvShowDetailsViewModel.uiState.value.tvShow == null) {
+                    android.util.Log.d("MainActivity", "Pre-populating TV show details from cache for: ${showFromCache.title}")
+                    tvShowDetailsViewModel.setTvShow(showFromCache)
+                }
+            }
 
             // Initialize progress tracking FIRST before loading any content
-            LaunchedEffect(currentProfile?.id) {
-                currentProfile?.let { profile ->
+            LaunchedEffect(activeProfile?.id) {
+                activeProfile?.let { profile ->
                     tvShowDetailsViewModel.initializeProgressTracking(context, profile.id)
                 }
             }
@@ -1972,7 +2183,8 @@ fun PureStreamApp(
                         tvShowDetailsViewModel.selectSeason(season)
                     },
                     onEpisodeClick = { episode ->
-                        // Navigate to episode details screen
+                        // Pre-populate the shared details VM with the episode object for instant next screen
+                        tvShowDetailsViewModel.setEpisode(episode)
                         navController.navigate(Destinations.episodeDetails(episode.ratingKey))
                     },
                     onBackClick = {
@@ -1988,71 +2200,8 @@ fun PureStreamApp(
                             tvShowDetailsViewModel.loadEpisodes(season.ratingKey)
                         }
                     },
-                    onAnalyzeProfanityClick = { episodeToAnalyze ->
-                        // Use current profile's filter level for analysis
-                        val filterLevel = currentProfile?.profanityFilterLevel 
-                            ?: com.purestream.data.model.ProfanityFilterLevel.MILD
-                        tvShowDetailsViewModel.analyzeEpisodeProfanity(episodeToAnalyze, filterLevel)
-                    },
-                    isAnalyzingSubtitles = tvShowDetailsState.isAnalyzingSubtitles,
-                    subtitleAnalysisResult = tvShowDetailsState.subtitleAnalysisResult,
-                    subtitleAnalysisError = tvShowDetailsState.subtitleAnalysisError,
-                    onClearAnalysisError = {
-                        tvShowDetailsViewModel.clearSubtitleAnalysisError()
-                    }
+                    currentProfile = activeProfile
                 )
-                
-                // Handle video URL result for episodes
-                LaunchedEffect(tvShowDetailsState.videoUrl) {
-                    tvShowDetailsState.videoUrl?.let { videoUrl ->
-                        val episode = tvShowDetailsState.episodes.find { episode ->
-                            // Find the episode that was just played
-                            true // For now, use the video URL directly
-                        }
-                        val episodeTitle = episode?.title ?: "Episode"
-                        val contentId = tvShowDetailsState.tvShow?.let { show ->
-                            episode?.let { ep -> "${show.ratingKey}_${ep.ratingKey}" }
-                        } ?: "unknown"
-
-                        android.util.Log.d("MainActivity", "Navigating to episode player with URL: ${videoUrl.take(100)}...")
-                        // Store episode and tvShow objects for tracking before navigation
-                        sharedMediaPlayerViewModel.setCurrentMedia(episode = episode, tvShow = tvShowDetailsState.tvShow)
-                        navController.navigate(Destinations.mediaPlayerWithUrl(Uri.encode(videoUrl), Uri.encode(episodeTitle), contentId))
-                        tvShowDetailsViewModel.clearVideoUrl() // Clear after navigation
-                    }
-                }
-                
-                // Show video error if any
-                tvShowDetailsState.videoError?.let { error ->
-                    LaunchedEffect(error) {
-                        android.util.Log.e("MainActivity", "Episode video URL error: $error")
-                        // Error handling via TvShowDetailsScreen UI - dialog not currently implemented
-                    }
-                }
-                
-                // Show loading indicator for video URL generation
-                if (tvShowDetailsState.isLoadingVideo) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.7f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            CircularProgressIndicator(
-                                color = Color(0xFFF5B800)
-                            )
-                            Text(
-                                text = "Getting episode video...",
-                                color = Color.White,
-                                fontSize = 16.sp
-                            )
-                        }
-                    }
-                }
             } else {
                 // Show loading or error state
                 Box(
@@ -2111,13 +2260,13 @@ fun PureStreamApp(
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             Text(
-                                text = "TV Show not found",
+                                text = "TV show not found",
                                 color = Color.White,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "This TV show may not be available.",
+                                text = "This show may not be available.",
                                 color = Color(0xFFB3B3B3),
                                 fontSize = 14.sp,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -2137,6 +2286,72 @@ fun PureStreamApp(
             }
         }
         
+        // Media Player Screen (Instant navigation)
+        composable(
+            route = Destinations.MEDIA_PLAYER,
+            arguments = listOf(
+                navArgument("contentId") { type = NavType.StringType },
+                navArgument("contentType") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val contentId = backStackEntry.arguments?.getString("contentId") ?: "unknown"
+            val contentType = backStackEntry.arguments?.getString("contentType") ?: "movie"
+            val coroutineScope = rememberCoroutineScope()
+            
+            val isDemoMode = com.purestream.data.demo.DemoData.isDemoToken(sharedPlexAuthRepository.getAuthToken())
+            val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
+            val settingsState by sharedSettingsViewModel.uiState.collectAsStateWithLifecycle()
+
+            // Initialize word tracking and setup connection
+            LaunchedEffect(homeState.currentProfile?.id) {
+                homeState.currentProfile?.let { profile ->
+                    sharedMediaPlayerViewModel.setProfileForWordTracking(profile.id)
+                    if (!isDemoMode) {
+                        sharedPlexAuthRepository.getAuthToken()?.let { token ->
+                            sharedMediaPlayerViewModel.setPlexConnectionWithAuth(token)
+                        }
+                    } else {
+                        sharedMediaPlayerViewModel.setDemoSubtitleAnalysis(com.purestream.data.demo.DemoData.DEMO_MUTING_TIMESTAMPS)
+                    }
+                }
+            }
+
+            MediaPlayerScreen(
+                videoUrl = "", // Explicitly empty to trigger loadVideoUrl in MediaPlayerScreen
+                title = sharedMediaPlayerViewModel.getStoredMovie()?.title 
+                        ?: sharedMediaPlayerViewModel.getStoredEpisode()?.title ?: "Loading Media...",
+                currentFilterLevel = homeState.currentProfile?.profanityFilterLevel ?: com.purestream.data.model.ProfanityFilterLevel.MILD,
+                isPremium = settingsState.appSettings.isPremium,
+                currentProfile = homeState.currentProfile,
+                contentId = contentId,
+                mediaPlayerViewModel = sharedMediaPlayerViewModel,
+                onFilterLevelChange = { newLevel ->
+                    homeState.currentProfile?.let { profile ->
+                        val updatedProfile = profile.copy(profanityFilterLevel = newLevel)
+                        sharedHomeViewModel.setCurrentProfile(updatedProfile)
+                        
+                        val profileManager = ProfileManager.getInstance(context)
+                        coroutineScope.launch {
+                            profileManager.setCurrentProfile(updatedProfile)
+                        }
+                        
+                        val profileRepository = com.purestream.data.repository.ProfileRepository(context)
+                        coroutineScope.launch {
+                            try {
+                                profileRepository.updateProfile(updatedProfile)
+                            } catch (e: Exception) {
+                                android.util.Log.e("MainActivity", "Failed to update profile: ${e.message}")
+                            }
+                        }
+                    }
+                },
+                onSubtitleAlignmentChange = { /* Handle alignment */ },
+                onBackClick = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
         // Media Player Screen with URL
         composable(
             route = Destinations.MEDIA_PLAYER_WITH_URL,
@@ -2248,33 +2463,26 @@ fun PureStreamApp(
             val episodeId = backStackEntry.arguments?.getString("episodeId") ?: return@composable
             val context = LocalContext.current
             
-            // Create TvShowDetailsViewModel instance to get episode data
-            val tvShowDetailsViewModel: com.purestream.ui.viewmodel.TvShowDetailsViewModel = viewModel {
-                com.purestream.ui.viewmodel.TvShowDetailsViewModel(
-                    context = context,
-                    openSubtitlesRepository = openSubtitlesRepository,
-                    subtitleAnalysisRepository = subtitleAnalysisRepository
-                )
-            }
+            // Use shared details VM
+            val tvShowDetailsViewModel: com.purestream.ui.viewmodel.TvShowDetailsViewModel = sharedTvShowDetailsViewModel
             val tvShowDetailsState by tvShowDetailsViewModel.uiState.collectAsStateWithLifecycle()
 
-            // Create SettingsViewModel to get premium status
-            val episodeDetailsSettingsViewModel: com.purestream.ui.viewmodel.SettingsViewModel = viewModel {
-                com.purestream.ui.viewmodel.SettingsViewModel(context)
-            }
-            val episodeDetailsSettingsState by episodeDetailsSettingsViewModel.uiState.collectAsStateWithLifecycle()
+            // Get premium status directly from PremiumStatusManager (source of truth)
+            val premiumStatusManager = remember { com.purestream.data.manager.PremiumStatusManager.getInstance(context) }
+            val premiumStatusState by premiumStatusManager.premiumStatus.collectAsStateWithLifecycle()
+            val isPremium = premiumStatusState is com.purestream.data.manager.PremiumStatusState.Premium
 
             val homeState by sharedHomeViewModel.uiState.collectAsStateWithLifecycle()
-            val currentProfile = homeState.currentProfile
+            val activeProfile: com.purestream.data.model.Profile? = homeState.currentProfile
 
             // Initialize progress tracking FIRST before loading any content
-            LaunchedEffect(currentProfile?.id) {
-                currentProfile?.let { profile ->
+            LaunchedEffect(activeProfile?.id) {
+                activeProfile?.let { profile ->
                     tvShowDetailsViewModel.initializeProgressTracking(context, profile.id)
                 }
             }
 
-            // Setup Plex connection and load episode
+            // Setup Plex connection and load episode - only if not already pre-populated
             LaunchedEffect(Unit) {
                 try {
                     val authRepository = com.purestream.data.repository.PlexAuthRepository(context)
@@ -2286,12 +2494,28 @@ fun PureStreamApp(
                         tvShowDetailsViewModel.setPlexConnection("http://demo.server:32400", "demo_token")
                     }
 
-                    // Load episode by ID
-                    tvShowDetailsViewModel.loadEpisodeById(episodeId)
+                    // Check if we need to load or if already there
+                    if (tvShowDetailsViewModel.uiState.value.currentEpisode?.ratingKey != episodeId) {
+                        tvShowDetailsViewModel.loadEpisodeById(episodeId)
+                    }
                 } catch (e: Exception) {
                     android.util.Log.e("MainActivity", "Error setting up Plex connection for episode details", e)
-                    tvShowDetailsViewModel.setPlexConnection("http://demo.server:32400", "demo_token")
                     tvShowDetailsViewModel.loadEpisodeById(episodeId)
+                }
+            }
+
+            // Refresh progress when returning to this screen
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        android.util.Log.d("MainActivity", "EpisodeDetails resumed - refreshing progress")
+                        tvShowDetailsViewModel.refreshProgress()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
                 }
             }
 
@@ -2300,7 +2524,7 @@ fun PureStreamApp(
             val tvShow = tvShowDetailsState.tvShow
 
             if (episode != null && tvShow != null) {
-                val currentFilterLevel = currentProfile?.profanityFilterLevel
+                val currentFilterLevel = activeProfile?.profanityFilterLevel
                     ?: com.purestream.data.model.ProfanityFilterLevel.MILD
 
                 // Check if analysis can be performed for current filter level
@@ -2316,14 +2540,18 @@ fun PureStreamApp(
                     progressPercentage = tvShowDetailsState.episodeProgressMap[episode.ratingKey],  // Pass episode progress
                     progressPosition = tvShowDetailsState.episodeProgressPositionMap[episode.ratingKey],
                     onPlayClick = { startPosition ->
-                        // Store start position in MediaPlayerViewModel before navigation
+                        // Store media and startPosition before navigation
                         sharedMediaPlayerViewModel.setStartPosition(startPosition)
-                        // Auto-trigger analysis if not done yet
+                        sharedMediaPlayerViewModel.setCurrentMedia(episode = episode, tvShow = tvShow)
+
+                        // Auto-trigger analysis in background if not done
                         if (tvShowDetailsState.canAnalyzeProfanity) {
                             tvShowDetailsViewModel.analyzeEpisodeProfanityAllLevels(episode)
                         }
-                        // Always proceed with video URL generation immediately
-                        tvShowDetailsViewModel.getVideoUrl(episode)
+
+                        // Navigate instantly
+                        val contentIdForPlayer = "${tvShow.ratingKey}_${episode.ratingKey}"
+                        navController.navigate(Destinations.mediaPlayer(contentIdForPlayer, "episode"))
                     },
                     onBackClick = {
                         navController.popBackStack()
@@ -2339,24 +2567,10 @@ fun PureStreamApp(
                         tvShowDetailsViewModel.clearSubtitleAnalysisError()
                     },
                     canAnalyzeProfanity = tvShowDetailsState.canAnalyzeProfanity,
-                    currentProfile = currentProfile,
-                    isPremium = episodeDetailsSettingsState.appSettings.isPremium,
+                    currentProfile = activeProfile,
+                    isPremium = isPremium,
                     isDemoMode = com.purestream.data.demo.DemoData.isDemoToken(sharedPlexAuthRepository.getAuthToken())
                 )
-                
-                // Handle video URL result for episodes
-                LaunchedEffect(tvShowDetailsState.videoUrl) {
-                    tvShowDetailsState.videoUrl?.let { videoUrl ->
-                        val contentId = tvShowDetailsState.tvShow?.let { show ->
-                            "${show.ratingKey}_${episode.ratingKey}"
-                        } ?: "unknown"
-                        android.util.Log.d("MainActivity", "Navigating to episode player with URL: ${videoUrl.take(100)}...")
-                        // Store episode and tvShow objects for tracking before navigation
-                        sharedMediaPlayerViewModel.setCurrentMedia(episode = episode, tvShow = tvShowDetailsState.tvShow)
-                        navController.navigate(Destinations.mediaPlayerWithUrl(Uri.encode(videoUrl), Uri.encode(episode.title), contentId))
-                        tvShowDetailsViewModel.clearVideoUrl() // Clear after navigation
-                    }
-                }
                 
                 // Show video error if any
                 tvShowDetailsState.videoError?.let { error ->
