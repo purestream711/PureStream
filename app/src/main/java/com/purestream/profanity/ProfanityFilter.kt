@@ -21,8 +21,12 @@ class ProfanityFilter {
             "fuck", "fucking", "fucked", "fucker", "fuckers", "fucks", "fuckin'", "fuckin'",
             "motherfuck", "motherfucker", "motherfuckers", "motherfucking",
             "bitch", "bitches", "bitching", "bitchin'", "bitchin'",
-            "ass", "asses", "asshole", "assholes",
-            "arse", "arses", "arsehole", "arseholes"
+            "ass", "asses", "asshole", "assholes", "badass",
+            "arse", "arses", "arsehole", "arseholes",
+            "datass", "ahole", "aholes", "dumbass", "dumbasses", "jackass", "jackasses",
+            "smartass", "wiseass", "headass", "lazyass", "fatass", "lardass", "cheapass",
+            "punkass", "uglyass", "bitchass", "hardass", "asshat", "assclown", "asswipe",
+            "assbag", "assface", "kickass", "halfassed", "asskiss", "asskisser", "assload"
         )
         
         // MODERATE: Worst of the worst + some lesser profanity
@@ -42,7 +46,8 @@ class ProfanityFilter {
             "oh my god", "omg", "jesus", "christ", "lord", "jesus christ", "holy shit",
             "fag", "fagot", "faggot",
             "retard", "retards", "gay", "homo", "queer", "lesbian", "tranny", "nigga",
-            "nigger", "son of a bitch", "spic", "chink", "wetback"
+            "nigger", "son of a bitch", "spic", "chink", "wetback",
+            "prick", "pricks"
         )
         
         private val REPLACEMENT_MAP = mapOf(
@@ -51,8 +56,23 @@ class ProfanityFilter {
             "fuckers" to "jerks", "fucks" to "messes up", "fuckin'" to "freakin'", "fuckin'" to "freakin'",
             "motherfuck" to "jerk", "motherfucker" to "jerk", "motherfuckers" to "jerks", "motherfucking" to "freaking",
             "bitch" to "jerk", "bitches" to "jerks", "bitching" to "complaining", "bitchin'" to "complainin'", "bitchin'" to "complainin'",
-            "ass" to "butt", "asses" to "butts", "asshole" to "jerk", "assholes" to "jerks",
+            "ass" to "butt", "asses" to "butts", "asshole" to "jerk", "assholes" to "jerks", "badass" to "boss",
             "arse" to "butt", "arses" to "butts", "arsehole" to "jerk", "arseholes" to "jerks",
+            "datass" to "that butt",
+            "ahole" to "jerk", "aholes" to "jerks",
+            "dumbass" to "dummy", "dumbasses" to "dummies",
+            "jackass" to "fool", "jackasses" to "fools",
+            "smartass" to "smartaleck", "wiseass" to "wiseguy",
+            "headass" to "fool", "lazyass" to "lazybones",
+            "fatass" to "slob", "lardass" to "slob",
+            "cheapass" to "cheapskate", "punkass" to "wimp",
+            "uglyass" to "ugly", "bitchass" to "wimpy",
+            "hardass" to "tough guy", "asshat" to "clown",
+            "assclown" to "clown", "asswipe" to "jerk",
+            "assbag" to "jerk", "assface" to "jerkface",
+            "kickass" to "awesome", "halfassed" to "lazy",
+            "asskiss" to "suck up", "asskisser" to "brownnoser",
+            "assload" to "boatload",
             
             // MODERATE level replacements
             "shit" to "crap", "shits" to "craps", "shitting" to "crapping", "shitter" to "crapper",
@@ -76,7 +96,8 @@ class ProfanityFilter {
             "retard" to "silly person", "retards" to "silly people", "gay" to "happy",
             "homo" to "person", "queer" to "strange", "lesbian" to "person", "tranny" to "person",
             "nigga" to "person", "nigger" to "person", "son of a bitch" to "mean person",
-            "spic" to "person", "chink" to "person", "wetback" to "person"
+            "spic" to "person", "chink" to "person", "wetback" to "person",
+            "prick" to "jerk", "pricks" to "jerks"
         )
     }
     

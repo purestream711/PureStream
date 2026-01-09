@@ -236,6 +236,16 @@ fun VLCMediaPlayer(
                 media.addOption(":avcodec-hw=any")
                 Log.d("VLCMediaPlayer", "Enabled hardware acceleration")
 
+                // CRITICAL: Disable direct rendering to enable tunneled mode for HDR
+                // Tunneled mode is required for HDR on Android TV hardware
+                media.addOption(":no-mediacodec-dr")
+                media.addOption(":no-omxil-dr")
+                Log.d("VLCMediaPlayer", "Disabled direct rendering for tunneled HDR mode")
+
+                // Force video output to use Android surface (required for HDR)
+                media.addOption(":vout=android_display")
+                Log.d("VLCMediaPlayer", "Forced Android display output for HDR")
+
                 // Ensure proper color transfer for HDR content
                 media.addOption(":android-display-chroma")
                 Log.d("VLCMediaPlayer", "Enabled Android display chroma for HDR colors")
