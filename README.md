@@ -32,15 +32,65 @@ A family-friendly Android TV streaming app that connects to Plex media servers w
 - Virtual keyboard with voice search
 
 ### 🎯 Media Player
-- ExoPlayer Media3 integration
-- Filtered subtitle display
+- LibVLC integration with hardware acceleration
+- **4K HDR Support**: Proper color space handling for HDR content
+- Filtered subtitle display with timing adjustment
 - Real-time profanity detection during playback
-- Episode tracking for TV shows
+- Episode tracking and progress saving for TV shows
 - Resume playback support
+- Picture-in-Picture mode (mobile)
 
 ## Screenshots
 
-*Coming soon*
+### Android TV
+
+<table>
+  <tr>
+    <td><img src="screenshots/tv/HomeScreen.png" width="400"/><br/><sub><b>Home Screen</b></sub></td>
+    <td><img src="screenshots/tv/ProfileSelectionScreen.png" width="400"/><br/><sub><b>Profile Selection</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/tv/MovieDetailsScreen.png" width="400"/><br/><sub><b>Movie Details</b></sub></td>
+    <td><img src="screenshots/tv/TVShowDetailsScreen.png" width="400"/><br/><sub><b>TV Show Details</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/tv/SearchScreen.png" width="400"/><br/><sub><b>Search</b></sub></td>
+    <td><img src="screenshots/tv/SettingsScreen.png" width="400"/><br/><sub><b>Settings</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/tv/ProfanityFilterSettings.png" width="400"/><br/><sub><b>Profanity Filter Settings</b></sub></td>
+    <td><img src="screenshots/tv/ProfileStatistics.png" width="400"/><br/><sub><b>Profile Statistics</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/tv/LevelUpScreen.png" width="400"/><br/><sub><b>Level Up Celebration</b></sub></td>
+    <td><img src="screenshots/tv/ConnectPlexScreen.png" width="400"/><br/><sub><b>Connect to Plex</b></sub></td>
+  </tr>
+</table>
+
+### Mobile
+
+<table>
+  <tr>
+    <td><img src="screenshots/mobile/HomeScreen.png" width="250"/><br/><sub><b>Home Screen</b></sub></td>
+    <td><img src="screenshots/mobile/ProfileSelectionScreen.png" width="250"/><br/><sub><b>Profile Selection</b></sub></td>
+    <td><img src="screenshots/mobile/MovieDetailsScreen.png" width="250"/><br/><sub><b>Movie Details</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/mobile/TVShowDetailsScreen.png" width="250"/><br/><sub><b>TV Show Details</b></sub></td>
+    <td><img src="screenshots/mobile/EpisodeDetailsScreen.png" width="250"/><br/><sub><b>Episode Details</b></sub></td>
+    <td><img src="screenshots/mobile/SearchScreen.png" width="250"/><br/><sub><b>Search</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/mobile/SettingsScreen.png" width="250"/><br/><sub><b>Settings</b></sub></td>
+    <td><img src="screenshots/mobile/ProfanityFilterSetting.png" width="250"/><br/><sub><b>Profanity Filter</b></sub></td>
+    <td><img src="screenshots/mobile/ProfileStatistics.png" width="250"/><br/><sub><b>Profile Statistics</b></sub></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/mobile/LevelUpScreen.png" width="250"/><br/><sub><b>Level Up</b></sub></td>
+    <td><img src="screenshots/mobile/ConnectPlexScreen.png" width="250"/><br/><sub><b>Connect to Plex</b></sub></td>
+    <td></td>
+  </tr>
+</table>
 
 ## Requirements
 
@@ -93,10 +143,11 @@ cd PureStream
 - **Android TV**: Leanback, TV Material3
 - **Networking**: Retrofit, OkHttp
 - **Database**: Room
-- **Media Playback**: ExoPlayer Media3
+- **Media Playback**: LibVLC 3.6.5 (4K HDR support)
 - **Image Loading**: Coil
 - **Dependency Injection**: Manual (ViewModels with Repositories)
 - **Coroutines**: Kotlin Coroutines with Flow
+- **Background Tasks**: WorkManager
 
 ### APIs & Services
 - **Plex API**: Media server integration
