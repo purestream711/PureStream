@@ -39,6 +39,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -100,7 +101,6 @@ fun SettingsScreen(
     onProfanityFilterChange: (ProfanityFilterLevel) -> Unit,
     onLibrarySelectionChange: (List<String>) -> Unit,
     onSettingToggle: (String, Boolean) -> Unit,
-    onMuteDurationChange: (Int) -> Unit,
     onAddCustomProfanity: (String) -> Unit,
     onAddWhitelistWord: (String) -> Unit,
     onRemoveCustomProfanity: (String) -> Unit,
@@ -240,7 +240,6 @@ fun SettingsScreen(
                     onProfanityFilterChange = onProfanityFilterChange,
                     onLibrarySelectionChange = onLibrarySelectionChange,
                     onSettingToggle = onSettingToggle,
-                    onMuteDurationChange = onMuteDurationChange,
                     onAddCustomProfanity = onAddCustomProfanity,
                     onAddWhitelistWord = onAddWhitelistWord,
                     onRemoveCustomProfanity = onRemoveCustomProfanity,
@@ -330,7 +329,6 @@ fun SettingsScreen(
                     onProfanityFilterChange = onProfanityFilterChange,
                     onLibrarySelectionChange = onLibrarySelectionChange,
                     onSettingToggle = onSettingToggle,
-                    onMuteDurationChange = onMuteDurationChange,
                     onAddCustomProfanity = onAddCustomProfanity,
                     onAddWhitelistWord = onAddWhitelistWord,
                     onRemoveCustomProfanity = onRemoveCustomProfanity,
@@ -445,7 +443,6 @@ private fun TabbedSettingsContent(
     onProfanityFilterChange: (ProfanityFilterLevel) -> Unit,
     onLibrarySelectionChange: (List<String>) -> Unit,
     onSettingToggle: (String, Boolean) -> Unit,
-    onMuteDurationChange: (Int) -> Unit,
     onAddCustomProfanity: (String) -> Unit,
     onAddWhitelistWord: (String) -> Unit,
     onRemoveCustomProfanity: (String) -> Unit,
@@ -916,7 +913,6 @@ private fun TabbedSettingsContent(
                         currentProfile = currentProfile,
                         isPremium = safePremiumStatus,
                         onProfanityFilterChange = onProfanityFilterChange,
-                        onMuteDurationChange = onMuteDurationChange,
                         onAddCustomProfanity = onAddCustomProfanity,
                         onAddWhitelistWord = onAddWhitelistWord,
                         onRemoveCustomProfanity = onRemoveCustomProfanity,
@@ -929,7 +925,8 @@ private fun TabbedSettingsContent(
                 SettingsTab.FILTERED_SUBTITLES -> {
                     FilteredSubtitlesTabContent(
                         filteredSubtitlesFocusRequester = filteredSubtitlesFocusRequester,
-                        filteredSubtitlesTabFocusRequester = filteredSubtitlesTabFocusRequester
+                        filteredSubtitlesTabFocusRequester = filteredSubtitlesTabFocusRequester,
+                        scrollResetTrigger = dashboardScrollResetTrigger
                     )
                 }
                 SettingsTab.DASHBOARD_CUSTOMIZATION -> {
@@ -1014,7 +1011,6 @@ private fun ProfanityFilterTabContent(
     currentProfile: Profile?,
     isPremium: Boolean,
     onProfanityFilterChange: (ProfanityFilterLevel) -> Unit,
-    onMuteDurationChange: (Int) -> Unit,
     onAddCustomProfanity: (String) -> Unit,
     onAddWhitelistWord: (String) -> Unit,
     onRemoveCustomProfanity: (String) -> Unit,
@@ -1073,15 +1069,6 @@ private fun ProfanityFilterTabContent(
                 )
             }
 
-            // Audio Mute Duration
-            item {
-                MuteDurationSetting(
-                    currentDuration = profile.audioMuteDuration,
-                    onDurationChange = if (hasProOrLevel15) onMuteDurationChange else { _ -> },
-                    isPremium = hasProOrLevel15 // Level 15 or Pro unlocks this
-                )
-            }
-
         }
     }
 }
@@ -1089,13 +1076,47 @@ private fun ProfanityFilterTabContent(
 @Composable
 private fun FilteredSubtitlesTabContent(
     filteredSubtitlesFocusRequester: FocusRequester,
-    filteredSubtitlesTabFocusRequester: FocusRequester
+    filteredSubtitlesTabFocusRequester: FocusRequester,
+    scrollResetTrigger: Int = 0
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val groupedMovies = remember { mutableStateOf<List<GroupedMovie>>(emptyList()) }
     val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+
+    // Focus restoration state
+    var focusTargetIndex by remember { mutableStateOf<Int?>(null) }
+    var deletedIndex by remember { mutableStateOf<Int?>(null) }
+
+    // Reset scroll to top whenever the tab gains focus
+    LaunchedEffect(scrollResetTrigger) {
+        if (scrollResetTrigger > 0) {
+            try {
+                listState.scrollToItem(0)
+            } catch (e: Exception) {
+                android.util.Log.e("SettingsScreen", "Error resetting scroll: ${e.message}")
+            }
+        }
+    }
+
+    // Logic to restore focus after deletion
+    LaunchedEffect(groupedMovies.value) {
+        deletedIndex?.let { index ->
+            if (groupedMovies.value.isNotEmpty()) {
+                val nextIndex = index.coerceAtMost(groupedMovies.value.lastIndex)
+                focusTargetIndex = nextIndex
+            } else {
+                // List is empty, focus the tab
+                try {
+                    filteredSubtitlesTabFocusRequester.requestFocus()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+            deletedIndex = null
+        }
+    }
 
     // Load and group subtitle files by movie
     LaunchedEffect(Unit) {
@@ -1109,12 +1130,22 @@ private fun FilteredSubtitlesTabContent(
                 // Group files by contentId (movie)
                 val grouped = files.groupBy { file ->
                     // Parse filename format: {contentId}_{filterLevel}_{baseName}_filtered.srt
-                    val parts = file.nameWithoutExtension.split("_")
-                    if (parts.size >= 2) {
-                        parts[0] // contentId is the first part
-                    } else {
-                        file.nameWithoutExtension // fallback
+                    val name = file.nameWithoutExtension
+                    
+                    // Find where the filter level starts
+                    val filterLevels = ProfanityFilterLevel.values().map { it.name }
+                    var contentId = name // Default fallback
+                    
+                    for (level in filterLevels) {
+                        val levelPart = "_${level}_"
+                        val index = name.indexOf(levelPart)
+                        if (index != -1) {
+                            contentId = name.substring(0, index)
+                            break
+                        }
                     }
+                    
+                    contentId
                 }.mapNotNull { (contentId, movieFiles) ->
                     if (movieFiles.isNotEmpty()) {
                         // Extract movie title from the first file's baseName
@@ -1122,7 +1153,28 @@ private fun FilteredSubtitlesTabContent(
                         val parts = firstFile.nameWithoutExtension.split("_")
                         val movieTitle = if (parts.size >= 3) {
                             // Remove contentId, filterLevel, and "filtered" suffix
-                            parts.drop(2).joinToString(" ").replace("filtered", "").trim()
+                            // Note: This naive removal might break if title has underscores, but baseName usually preserved
+                            // A better way is to remove known prefix/suffix
+                            
+                            // Try to reconstruct title from filename parts after filter level
+                            val name = firstFile.nameWithoutExtension
+                            val filterLevels = ProfanityFilterLevel.values().map { it.name }
+                            var titleStart = -1
+                            
+                            for (level in filterLevels) {
+                                val levelPart = "_${level}_"
+                                val index = name.indexOf(levelPart)
+                                if (index != -1) {
+                                    titleStart = index + levelPart.length
+                                    break
+                                }
+                            }
+                            
+                            if (titleStart != -1) {
+                                name.substring(titleStart).replace("_filtered", "").replace("_", " ")
+                            } else {
+                                firstFile.nameWithoutExtension.replace("_filtered", "").replace("_", " ")
+                            }
                         } else {
                             firstFile.nameWithoutExtension.replace("_filtered", "").replace("_", " ")
                         }
@@ -1179,20 +1231,32 @@ private fun FilteredSubtitlesTabContent(
                 color = TextTertiary,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
+
+            Text(
+                text = "Note: filtered subtitles are automatically removed after 30 days.",
+                fontSize = 12.sp,
+                color = TextTertiary,
+                fontStyle = FontStyle.Italic,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
 
         // Display grouped movies
         if (groupedMovies.value.isNotEmpty()) {
-            items(groupedMovies.value.size) { index ->
-                val movie = groupedMovies.value[index]
+            itemsIndexed(groupedMovies.value) { index, movie ->
                 FilteredSubtitleItem(
                     title = movie.movieTitle,
                     date = dateFormat.format(Date(movie.lastModified)),
                     fileSize = "${movie.totalSize / 1024}KB (${movie.filterLevelsCount} filter levels)",
                     filePath = "${movie.contentId} (${movie.filterLevelsCount} files)",
+                    forceFocus = focusTargetIndex == index,
+                    onFocusConsumed = { focusTargetIndex = null },
                     onDelete = {
                         try {
                             android.util.Log.d("SettingsScreen", "Removing all analysis for movie: ${movie.movieTitle} (contentId: ${movie.contentId})")
+
+                            // Store deleted index for focus restoration
+                            deletedIndex = index
 
                             // Get the SubtitleAnalysisRepository to properly delete all analysis
                             val database = com.purestream.data.database.AppDatabase.getDatabase(context)
@@ -1214,15 +1278,36 @@ private fun FilteredSubtitlesTabContent(
                                                 file.isFile && file.name.endsWith("_filtered.srt")
                                             } ?: emptyArray()
 
+                                            // Re-run grouping logic
                                             val grouped = files.groupBy { file ->
-                                                val parts = file.nameWithoutExtension.split("_")
-                                                if (parts.size >= 2) parts[0] else file.nameWithoutExtension
+                                                val name = file.nameWithoutExtension
+                                                val filterLevels = ProfanityFilterLevel.values().map { it.name }
+                                                var contentId = name
+                                                for (level in filterLevels) {
+                                                    val levelPart = "_${level}_"
+                                                    val idx = name.indexOf(levelPart)
+                                                    if (idx != -1) {
+                                                        contentId = name.substring(0, idx)
+                                                        break
+                                                    }
+                                                }
+                                                contentId
                                             }.mapNotNull { (contentId, movieFiles) ->
                                                 if (movieFiles.isNotEmpty()) {
                                                     val firstFile = movieFiles.first()
-                                                    val parts = firstFile.nameWithoutExtension.split("_")
-                                                    val movieTitle = if (parts.size >= 3) {
-                                                        parts.drop(2).joinToString(" ").replace("filtered", "").trim()
+                                                    val name = firstFile.nameWithoutExtension
+                                                    val filterLevels = ProfanityFilterLevel.values().map { it.name }
+                                                    var titleStart = -1
+                                                    for (level in filterLevels) {
+                                                        val levelPart = "_${level}_"
+                                                        val idx = name.indexOf(levelPart)
+                                                        if (idx != -1) {
+                                                            titleStart = idx + levelPart.length
+                                                            break
+                                                        }
+                                                    }
+                                                    val movieTitle = if (titleStart != -1) {
+                                                        name.substring(titleStart).replace("_filtered", "").replace("_", " ")
                                                     } else {
                                                         firstFile.nameWithoutExtension.replace("_filtered", "").replace("_", " ")
                                                     }
@@ -1239,6 +1324,8 @@ private fun FilteredSubtitlesTabContent(
                                             }.sortedByDescending { it.lastModified }
 
                                             groupedMovies.value = grouped
+                                        } else {
+                                            groupedMovies.value = emptyList()
                                         }
                                     }
                                 } catch (e: Exception) {
@@ -1579,11 +1666,11 @@ private fun DashboardCustomizationTabContent(
                     )
                     Text(
                         text = if (isPremium) {
-                            "Press select to rearrange, hold select to disable."
+                            "Tap to enable/disable, tap and hold to rearrange."
                         } else {
                             val (currentLevel, _, _) = LevelCalculator.calculateLevel(profile?.totalFilteredWordsCount ?: 0)
                             if (currentLevel >= 20) {
-                                "Press select to rearrange, hold select to disable."
+                                "Tap to enable/disable, tap and hold to rearrange."
                             } else {
                                 "Reach Level 20 or upgrade to Pro to customize your home screen layout."
                             }
@@ -2741,22 +2828,52 @@ private fun FilteredSubtitleItem(
     fileSize: String,
     filePath: String,
     onDelete: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    forceFocus: Boolean = false,
+    onFocusConsumed: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val itemFocusRequester = remember { FocusRequester() }
+    val isMobile = rememberIsMobile()
+
+    // Handle forced focus (e.g. after deletion) - TV Only
+    LaunchedEffect(forceFocus) {
+        if (forceFocus && !isMobile) {
+            try {
+                kotlinx.coroutines.delay(100)
+                itemFocusRequester.requestFocus()
+                onFocusConsumed()
+            } catch (e: Exception) {
+                // Ignore focus errors
+            }
+        }
+    }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .focusRequester(itemFocusRequester)
             .focusable(interactionSource = interactionSource)
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type == KeyEventType.KeyUp && 
+                    (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter)) {
+                    onDelete()
+                    true
+                } else false
+            }
+            .clickable(
+                interactionSource = interactionSource, 
+                indication = null,
+                onClick = onDelete
+            )
             .background(
-                color = if (isFocused) Color(0xFF1A1C2E).copy(alpha = 0.9f) else Color(0xFF1A1C2E).copy(alpha = 0.7f),
+                color = if (isFocused && !isMobile) Color(0xFF1A1C2E).copy(alpha = 0.9f) else Color(0xFF1A1C2E).copy(alpha = 0.7f),
                 shape = RoundedCornerShape(12.dp)
             )
             .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                width = if (isFocused && !isMobile) 2.dp else 1.dp,
+                color = if (isFocused && !isMobile) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
                 shape = RoundedCornerShape(12.dp)
             )
     ) {
@@ -2794,8 +2911,8 @@ private fun FilteredSubtitleItem(
             ) {
                 val deleteInteractionSource = remember { MutableInteractionSource() }
 
-                IconButton(
-                    onClick = onDelete,
+                // Just a visual button on TV, but clickable for mouse
+                Box(
                     modifier = Modifier
                         .background(
                             color = getAnimatedButtonBackgroundColor(
@@ -2804,9 +2921,10 @@ private fun FilteredSubtitleItem(
                             ),
                             shape = androidx.compose.foundation.shape.CircleShape
                         )
-                        .hoverable(deleteInteractionSource)
-                        .focusable(interactionSource = deleteInteractionSource)
                         .size(32.dp)
+                        .focusProperties { canFocus = false } // Prevent button from taking focus on TV
+                        .clickable { onDelete() }, // Allow mouse click
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         Icons.Default.Delete,
@@ -3292,115 +3410,6 @@ private fun FilterLevelChip(
 }
 
 @Composable
-private fun MuteDurationSetting(
-    currentDuration: Int,
-    onDurationChange: (Int) -> Unit,
-    isPremium: Boolean = true
-) {
-    Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "Audio Mute Duration",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isPremium) TextPrimary else TextSecondary,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            if (!isPremium) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "Locked feature",
-                    tint = Color(0xFF8B5CF6),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-
-        Text(
-            text = if (isPremium) "How long to mute audio when profanity is detected: ${currentDuration}ms" else "Reach Level 15 or upgrade to Pro to customize mute duration (locked at ${currentDuration}ms)",
-            fontSize = 12.sp,
-            color = if (isPremium) TextSecondary else Color(0xFF8B5CF6),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            listOf(1000, 2000, 3000, 5000).forEach { duration ->
-                DurationChip(
-                    duration = duration,
-                    isSelected = currentDuration == duration,
-                    onClick = { if (isPremium) onDurationChange(duration) },
-                    enabled = true,
-                    isLocked = !isPremium
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalComposeUiApi::class)
-@Composable
-private fun DurationChip(
-    duration: Int,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    isLocked: Boolean = false
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val context = LocalContext.current
-    val soundManager = remember { SoundManager.getInstance(context) }
-    var isFocused by remember { mutableStateOf(false) }
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .onFocusChanged { focusState ->
-                val wasFocused = isFocused
-                isFocused = focusState.isFocused
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                enabled = true, // Always enable for navigation
-                onClick = {
-                    if (!isLocked && enabled) {
-                        android.util.Log.d("SettingsScreen", "Duration chip clicked - playing CLICK sound")
-                        soundManager.playSound(SoundManager.Sound.CLICK)
-                        onClick()
-                    }
-                }
-            )
-            .background(
-                color = when {
-                    isSelected -> Color(0xFF8B5CF6).copy(alpha = 0.5f)
-                    isFocused -> Color.White.copy(alpha = 0.15f)
-                    else -> Color.White.copy(alpha = 0.05f)
-                },
-                shape = RoundedCornerShape(16.dp)
-            )
-            .border(
-                width = if (isFocused) 2.dp else 1.dp,
-                color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(16.dp)
-            )
-            .alpha(if (isLocked || !enabled) 0.5f else 1f)
-    ) {
-        Text(
-            text = "${duration}ms",
-            fontSize = 12.sp,
-            color = Color.White.copy(alpha = if (isSelected || isFocused) 1f else 0.7f),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-        )
-    }
-}
-
-@Composable
 private fun LibrarySelectionSection(
     availableLibraries: List<PlexLibrary>,
     selectedLibraries: List<String>,
@@ -3761,8 +3770,8 @@ private fun CustomProfanitySetting(
                     .weight(1f)
                     .background(Color(0xFF1A1C2E).copy(alpha = 0.7f), RoundedCornerShape(12.dp))
                     .border(
-                        width = 1.dp,
-                        color = Color.White.copy(alpha = 0.1f),
+                        width = if (isFocused) 2.dp else 1.dp,
+                        color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
                         shape = RoundedCornerShape(12.dp)
                     )
             ) {
@@ -3777,11 +3786,13 @@ private fun CustomProfanitySetting(
                         )
                     },
                     singleLine = true,
-                    enabled = isPremium,
+                    enabled = true, // Always enabled to allow focus
+                    readOnly = !isPremium, // But read-only if not premium
                     interactionSource = textFieldInteractionSource,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onFocusChanged { isFocused = it.isFocused },
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .alpha(if (isPremium) 1f else 0.5f), // Dim text field if locked
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Transparent,
                         unfocusedBorderColor = Color.Transparent,
@@ -3796,10 +3807,8 @@ private fun CustomProfanitySetting(
             }
 
             val addButtonInteractionSource = remember { MutableInteractionSource() }
-            val addButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                interactionSource = addButtonInteractionSource,
-                defaultColor = NetflixRed
-            )
+            val isButtonFocused by addButtonInteractionSource.collectIsFocusedAsState()
+            val buttonBaseColor = Color(0xFF8B5CF6) // Purple
 
             Button(
                 onClick = {
@@ -3810,16 +3819,16 @@ private fun CustomProfanitySetting(
                         inputText = ""
                     }
                 },
-                enabled = isPremium && inputText.isNotBlank(),
+                enabled = true, // Always enable for navigation
                 modifier = Modifier
                     .hoverable(addButtonInteractionSource)
                     .focusable(interactionSource = addButtonInteractionSource)
                     .tvButtonFocus(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isPremium && inputText.isNotBlank()) addButtonBackgroundColor else BackgroundSecondary,
-                    contentColor = if (isPremium && inputText.isNotBlank()) Color.White else TextTertiary,
-                    disabledContainerColor = BackgroundSecondary,
-                    disabledContentColor = TextTertiary
+                    containerColor = if (isButtonFocused) Color.White else if (isPremium && inputText.isNotBlank()) buttonBaseColor else buttonBaseColor.copy(alpha = 0.3f),
+                    contentColor = if (isButtonFocused) Color.Black else if (isPremium && inputText.isNotBlank()) Color.White else Color.White.copy(alpha = 0.3f),
+                    disabledContainerColor = buttonBaseColor.copy(alpha = 0.3f), // Fallback
+                    disabledContentColor = Color.White.copy(alpha = 0.3f)
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {
@@ -3905,8 +3914,8 @@ private fun WhitelistProfanitySetting(
                     .weight(1f)
                     .background(Color(0xFF1A1C2E).copy(alpha = 0.7f), RoundedCornerShape(12.dp))
                     .border(
-                        width = 1.dp,
-                        color = Color.White.copy(alpha = 0.1f),
+                        width = if (isFocused) 2.dp else 1.dp,
+                        color = if (isFocused) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
                         shape = RoundedCornerShape(12.dp)
                     )
             ) {
@@ -3921,11 +3930,13 @@ private fun WhitelistProfanitySetting(
                         )
                     },
                     singleLine = true,
-                    enabled = isPremium,
+                    enabled = true, // Always enabled to allow focus
+                    readOnly = !isPremium, // But read-only if not premium
                     interactionSource = textFieldInteractionSource,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onFocusChanged { isFocused = it.isFocused },
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .alpha(if (isPremium) 1f else 0.5f), // Dim text field if locked
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Color.Transparent,
                         unfocusedBorderColor = Color.Transparent,
@@ -3940,10 +3951,8 @@ private fun WhitelistProfanitySetting(
             }
 
             val removeButtonInteractionSource = remember { MutableInteractionSource() }
-            val removeButtonBackgroundColor = getAnimatedButtonBackgroundColor(
-                interactionSource = removeButtonInteractionSource,
-                defaultColor = Color(0xFF10B981)
-            )
+            val isButtonFocused by removeButtonInteractionSource.collectIsFocusedAsState()
+            val buttonBaseColor = Color(0xFFDC2626) // Red
 
             Button(
                 onClick = {
@@ -3954,16 +3963,16 @@ private fun WhitelistProfanitySetting(
                         inputText = ""
                     }
                 },
-                enabled = isPremium && inputText.isNotBlank(),
+                enabled = true, // Always enabled for navigation
                 modifier = Modifier
                     .hoverable(removeButtonInteractionSource)
                     .focusable(interactionSource = removeButtonInteractionSource)
                     .tvButtonFocus(),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isPremium && inputText.isNotBlank()) removeButtonBackgroundColor else BackgroundSecondary,
-                    contentColor = if (isPremium && inputText.isNotBlank()) Color.White else TextTertiary,
-                    disabledContainerColor = BackgroundSecondary,
-                    disabledContentColor = TextTertiary
+                    containerColor = if (isButtonFocused) Color.White else if (isPremium && inputText.isNotBlank()) buttonBaseColor else buttonBaseColor.copy(alpha = 0.3f),
+                    contentColor = if (isButtonFocused) Color.Black else if (isPremium && inputText.isNotBlank()) Color.White else Color.White.copy(alpha = 0.3f),
+                    disabledContainerColor = buttonBaseColor.copy(alpha = 0.3f), // Fallback
+                    disabledContentColor = Color.White.copy(alpha = 0.3f)
                 ),
                 shape = RoundedCornerShape(8.dp)
             ) {

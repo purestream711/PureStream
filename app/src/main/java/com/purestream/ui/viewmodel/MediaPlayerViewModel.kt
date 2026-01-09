@@ -1093,7 +1093,10 @@ class MediaPlayerViewModel(
         viewModelScope.launch {
             try {
                 if (contentId.isNotEmpty() && contentId != "unknown") {
-                    val hasAnalysis = subtitleAnalysisRepository?.hasAnalysisForFilterLevel(contentId, filterLevel) ?: false
+                    // Force IO dispatcher and explicit context to avoid caching issues on some TV devices
+                    val hasAnalysis = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        subtitleAnalysisRepository?.hasAnalysisForFilterLevel(contentId, filterLevel) ?: false
+                    }
                     _uiState.value = _uiState.value.copy(hasAnalysis = hasAnalysis)
                     android.util.Log.d("MediaPlayerViewModel", "Analysis status check: contentId=$contentId, filterLevel=$filterLevel, hasAnalysis=$hasAnalysis")
                 }

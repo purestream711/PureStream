@@ -7,6 +7,15 @@ import java.util.regex.Pattern
 class ProfanityFilter {
     
     companion object {
+        private val FLEXIBLE_MATCH_WORDS = setOf(
+            "fuck", "bitch", "bastard", "whore", "cunt", "shit"
+        )
+
+        private val WORD_EXCEPTIONS = mapOf(
+            "shit" to setOf("shiitake", "mishit", "megahit", "shitepoke"),
+            "cunt" to setOf("scunthorpe")
+        )
+
         // MILD: Only the worst of the worst profanity
         private val MILD_WORDS = setOf(
             "fuck", "fucking", "fucked", "fucker", "fuckers", "fucks", "fuckin'", "fuckin'",
@@ -19,6 +28,7 @@ class ProfanityFilter {
         // MODERATE: Worst of the worst + some lesser profanity
         private val MODERATE_WORDS = MILD_WORDS + setOf(
             "shit", "shits", "shitting", "shitter", "shite", "shitty", "shittier", "bullshit", "dipshit", "dipshits",
+            "dickwad", "dickwads",
             "cunt", "cunts", "pussy", "pussies",
             "cock", "cocks", "cocksucker", "cocksuckers",
             "dick", "dicks", "dickhead", "dickheads",
@@ -45,8 +55,9 @@ class ProfanityFilter {
             "arse" to "butt", "arses" to "butts", "arsehole" to "jerk", "arseholes" to "jerks",
             
             // MODERATE level replacements
-            "shit" to "shoot", "shits" to "shoots", "shitting" to "shooting", "shitter" to "shooter",
-            "shite" to "shoot", "shitty" to "awful", "shittier" to "worse", "bullshit" to "nonsense", "dipshit" to "silly person", "dipshits" to "silly people",
+            "shit" to "crap", "shits" to "craps", "shitting" to "crapping", "shitter" to "crapper",
+            "shite" to "crap", "shitty" to "crappy", "shittier" to "crappier", "bullshit" to "nonsense", "dipshit" to "silly person", "dipshits" to "silly people",
+            "dickwad" to "jerkwad", "dickwads" to "jerkwads",
             "cunt" to "person", "cunts" to "people", "pussy" to "cat", "pussies" to "cats",
             "cock" to "rooster", "cocks" to "roosters", "cocksucker" to "jerk", "cocksuckers" to "jerks",
             "dick" to "jerk", "dicks" to "jerks", "dickhead" to "jerk", "dickheads" to "jerks",
@@ -60,7 +71,7 @@ class ProfanityFilter {
             "goddamn" to "gosh darn", "goddam" to "gosh darn", "goddammit" to "gosh darnit",
             "god damn" to "gosh darn", "god dammit" to "gosh darnit", "oh my god" to "oh my gosh",
             "omg" to "omg", "jesus" to "jeepers", "christ" to "crikey", "lord" to "goodness",
-            "jesus christ" to "jeepers crikey", "holy shit" to "holy shoot",
+            "jesus christ" to "jeepers crikey", "holy shit" to "holy crap",
             "fag" to "person", "fagot" to "person", "faggot" to "person",
             "retard" to "silly person", "retards" to "silly people", "gay" to "happy",
             "homo" to "person", "queer" to "strange", "lesbian" to "person", "tranny" to "person",
@@ -98,6 +109,42 @@ class ProfanityFilter {
         whitelistedWords.addAll(words.map { it.lowercase() })
     }
     
+    private fun isFalsePositive(text: String, start: Int, end: Int, word: String): Boolean {
+        val exceptions = WORD_EXCEPTIONS[word.lowercase()] ?: return false
+        
+        // Expand to full word
+        var wordStart = start
+        while (wordStart > 0 && Character.isLetter(text[wordStart - 1])) {
+            wordStart--
+        }
+        
+        var wordEnd = end
+        while (wordEnd < text.length && Character.isLetter(text[wordEnd])) {
+            wordEnd++
+        }
+        
+        val fullWord = text.substring(wordStart, wordEnd).lowercase()
+        return exceptions.any { exception -> fullWord.contains(exception) }
+    }
+
+    private fun matchCase(original: String, replacement: String): String {
+        if (original.isEmpty() || replacement.isEmpty()) return replacement
+        
+        // Check for ALL CAPS (if length > 1)
+        if (original.length > 1 && original == original.uppercase()) {
+            return replacement.uppercase()
+        }
+        
+        // Check for Title Case
+        if (Character.isUpperCase(original[0])) {
+            // If replacement is empty, return empty
+            if (replacement.length == 1) return replacement.uppercase()
+            return replacement[0].uppercase() + replacement.substring(1)
+        }
+        
+        return replacement // Default to lowercase (as defined in map)
+    }
+
     fun filterText(text: String, filterLevel: ProfanityFilterLevel): FilterResult {
         // Always detect ALL profanity words (predefined + custom) regardless of filter level for consistent analysis
         val allProfanityWords = STRICT_WORDS + customFilteredWords  // Include custom words in detection
@@ -108,12 +155,25 @@ class ProfanityFilter {
         // First pass: Detect ALL profanity words (regardless of filter level)
         allProfanityWords.forEach { word ->
             if (!whitelistedWords.contains(word.lowercase())) {
-                val pattern = Pattern.compile("\\b${Pattern.quote(word)}\\b", Pattern.CASE_INSENSITIVE)
+                val lowercaseWord = word.lowercase()
+                val isFlexible = FLEXIBLE_MATCH_WORDS.contains(lowercaseWord)
+                
+                val pattern = if (isFlexible) {
+                    Pattern.compile(Pattern.quote(word), Pattern.CASE_INSENSITIVE)
+                } else {
+                    Pattern.compile("\\b${Pattern.quote(word)}\\b", Pattern.CASE_INSENSITIVE)
+                }
+                
                 val matcher = pattern.matcher(text)
                 
-                if (matcher.find()) {
+                while (matcher.find()) {
+                    if (isFlexible && isFalsePositive(text, matcher.start(), matcher.end(), word)) {
+                        continue
+                    }
                     hasProfanity = true
-                    detectedWords.add(word)
+                    if (!detectedWords.contains(word)) {
+                        detectedWords.add(word)
+                    }
                 }
             }
         }
@@ -136,25 +196,46 @@ class ProfanityFilter {
             return FilterResult(filteredText, hasProfanity, detectedWords)
         }
         
-        val wordsToFilter = getWordsToFilter(filterLevel)
+        val wordsToFilter = getWordsToFilter(filterLevel).sortedByDescending { it.length }
         
         // Apply replacements for words that should be filtered at this level
         wordsToFilter.forEach { word ->
             if (!whitelistedWords.contains(word.lowercase()) && detectedWords.contains(word)) {
-                val pattern = Pattern.compile("\\b${Pattern.quote(word)}\\b", Pattern.CASE_INSENSITIVE)
+                val lowercaseWord = word.lowercase()
+                val isFlexible = FLEXIBLE_MATCH_WORDS.contains(lowercaseWord)
+                
+                val pattern = if (isFlexible) {
+                    Pattern.compile(Pattern.quote(word), Pattern.CASE_INSENSITIVE)
+                } else {
+                    Pattern.compile("\\b${Pattern.quote(word)}\\b", Pattern.CASE_INSENSITIVE)
+                }
+                
                 val matcher = pattern.matcher(filteredText)
                 
-                if (matcher.find()) {
-                    val replacement = if (customFilteredWords.contains(word)) {
-                        // Replace custom words with [filtered] as requested
+                // We need to handle replacements carefully with flexible matching to avoid infinite loops or double replacements
+                // Using appendReplacement is safer than replaceAll when we have conditional logic (exceptions)
+                val sb = StringBuffer()
+                var foundMatch = false
+                while (matcher.find()) {
+                    val originalText = matcher.group()
+                    if (isFlexible && isFalsePositive(filteredText, matcher.start(), matcher.end(), word)) {
+                        matcher.appendReplacement(sb, originalText)
+                        continue
+                    }
+                    
+                    foundMatch = true
+                    val baseReplacement = if (customFilteredWords.contains(word)) {
                         "[filtered]"
                     } else {
-                        // Use standard replacement for predefined words
                         REPLACEMENT_MAP[word.lowercase()] ?: "***"
                     }
-                    // Wrap replacement in zero-width Unicode characters to indicate filtered content for audio muting
-                    // \u200B = Zero Width Space (start marker), \u200C = Zero Width Non-Joiner (end marker)
-                    filteredText = matcher.replaceAll("\u200B$replacement\u200C")
+                    val casedReplacement = matchCase(originalText, baseReplacement)
+                    matcher.appendReplacement(sb, "\u200B$casedReplacement\u200C")
+                }
+                matcher.appendTail(sb)
+                
+                if (foundMatch) {
+                    filteredText = sb.toString()
                 }
             }
         }
@@ -165,14 +246,33 @@ class ProfanityFilter {
     fun analyzeProfanityLevel(text: String): ProfanityLevel {
         val lowercaseText = text.lowercase()
         
+        // Updated analysis to respect flexible matching
         val strictCount = STRICT_WORDS.count { word ->
-            lowercaseText.contains("\\b${Pattern.quote(word)}\\b".toRegex())
+            val isFlexible = FLEXIBLE_MATCH_WORDS.contains(word)
+            val regex = if (isFlexible) {
+                 Pattern.quote(word).toRegex(RegexOption.IGNORE_CASE)
+            } else {
+                 "\\b${Pattern.quote(word)}\\b".toRegex(RegexOption.IGNORE_CASE)
+            }
+            lowercaseText.contains(regex)
         }
         val moderateCount = MODERATE_WORDS.count { word ->
-            lowercaseText.contains("\\b${Pattern.quote(word)}\\b".toRegex())
+            val isFlexible = FLEXIBLE_MATCH_WORDS.contains(word)
+            val regex = if (isFlexible) {
+                 Pattern.quote(word).toRegex(RegexOption.IGNORE_CASE)
+            } else {
+                 "\\b${Pattern.quote(word)}\\b".toRegex(RegexOption.IGNORE_CASE)
+            }
+            lowercaseText.contains(regex)
         }
         val mildCount = MILD_WORDS.count { word ->
-            lowercaseText.contains("\\b${Pattern.quote(word)}\\b".toRegex())
+            val isFlexible = FLEXIBLE_MATCH_WORDS.contains(word)
+            val regex = if (isFlexible) {
+                 Pattern.quote(word).toRegex(RegexOption.IGNORE_CASE)
+            } else {
+                 "\\b${Pattern.quote(word)}\\b".toRegex(RegexOption.IGNORE_CASE)
+            }
+            lowercaseText.contains(regex)
         }
         
         return when {

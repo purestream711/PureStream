@@ -605,8 +605,9 @@ class MovieDetailsViewModel(
     /**
      * Keep the original method for compatibility, but make it use progressive analysis
      */
-    fun analyzeMovieProfanityAllLevels(movie: Movie) {
-        analyzeMovieProfanityProgressive(movie, ProfanityFilterLevel.MILD)
+    fun analyzeMovieProfanityAllLevels(movie: Movie, priorityLevel: ProfanityFilterLevel = ProfanityFilterLevel.MILD) {
+        android.util.Log.d("MovieDetailsViewModel", "analyzeMovieProfanityAllLevels called with priority level: $priorityLevel")
+        analyzeMovieProfanityProgressive(movie, priorityLevel)
     }
 
     // Initialize watch progress repository with context and profile

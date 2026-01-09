@@ -1,6 +1,7 @@
 package com.purestream.ui.screens
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,6 +48,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import coil.compose.AsyncImage
 import com.purestream.data.model.*
 import com.purestream.ui.theme.*
+import com.purestream.utils.SoundManager
 import com.purestream.utils.rememberIsMobile
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -75,6 +77,31 @@ fun TvShowDetailsScreen(
     val backButtonFocusRequester = remember { FocusRequester() }
     val firstSeasonFocusRequester = remember { FocusRequester() }
     val firstEpisodeFocusRequester = remember { FocusRequester() }
+
+    val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+    
+    // Track if we are navigating deeper to an episode to keep music playing
+    var isNavigatingToEpisode by remember { mutableStateOf(false) }
+
+    // Wrap the click handler to update navigation state
+    val handleEpisodeClick: (Episode) -> Unit = { episode ->
+        isNavigatingToEpisode = true
+        onEpisodeClick(episode)
+    }
+
+    DisposableEffect(tvShow.theme) {
+        if (!tvShow.theme.isNullOrBlank()) {
+             soundManager.playThemeMusic(tvShow.theme)
+        }
+        onDispose {
+             // Only stop music if we are NOT navigating to an episode details screen
+             // AND if we actually had a theme to play (otherwise we might stop the new screen's music)
+             if (!isNavigatingToEpisode && !tvShow.theme.isNullOrBlank()) {
+                 soundManager.stopThemeMusic(url = tvShow.theme)
+             }
+        }
+    }
 
     // Scroll state for mobile LazyColumn (for parallax effect)
     val scrollState = if (isMobile) rememberLazyListState() else null
@@ -361,7 +388,7 @@ fun TvShowDetailsScreen(
                         ) {
                             // Play First Episode Button
                             Button(
-                                onClick = { if (episodes.isNotEmpty()) onEpisodeClick(episodes.first()) },
+                                onClick = { if (episodes.isNotEmpty()) handleEpisodeClick(episodes.first()) },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(56.dp),
@@ -380,13 +407,17 @@ fun TvShowDetailsScreen(
 
                             // Summary
                             tvShow.summary?.let {
+                                var isDescriptionExpanded by remember { mutableStateOf(false) }
                                 Text(
                                     text = it,
                                     fontSize = 16.sp,
                                     color = Color.White.copy(alpha = 0.8f),
                                     lineHeight = 24.sp,
-                                    maxLines = 6,
-                                    overflow = TextOverflow.Ellipsis
+                                    maxLines = if (isDescriptionExpanded) Int.MAX_VALUE else 6,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clickable { isDescriptionExpanded = !isDescriptionExpanded }
+                                        .animateContentSize()
                                 )
                             }
 
@@ -406,7 +437,7 @@ fun TvShowDetailsScreen(
                             }
 
                             // Episodes Section
-                            EpisodesLayer(isLoadingEpisodes, episodesError, episodes, selectedSeason, seasons, onEpisodeClick, onRetryEpisodes, episodeProgressMap, true, null, null)
+                            EpisodesLayer(isLoadingEpisodes, episodesError, episodes, selectedSeason, seasons, handleEpisodeClick, onRetryEpisodes, episodeProgressMap, true, null, null)
 
                             // Bottom padding
                             Spacer(Modifier.height(64.dp))
@@ -423,7 +454,7 @@ fun TvShowDetailsScreen(
                             tvShow = tvShow,
                             episodes = episodes,
                             seasons = seasons,
-                            onEpisodeClick = onEpisodeClick,
+                            onEpisodeClick = handleEpisodeClick,
                             onBackClick = onBackClick,
                             heroSectionFocusRequester = heroSectionFocusRequester,
                             backButtonFocusRequester = backButtonFocusRequester,
@@ -440,7 +471,7 @@ fun TvShowDetailsScreen(
                     }
 
                     item {
-                        EpisodesLayer(isLoadingEpisodes, episodesError, episodes, selectedSeason, seasons, onEpisodeClick, onRetryEpisodes, episodeProgressMap, false, firstEpisodeFocusRequester, if (seasons.size > 1) firstSeasonFocusRequester else heroSectionFocusRequester)
+                        EpisodesLayer(isLoadingEpisodes, episodesError, episodes, selectedSeason, seasons, handleEpisodeClick, onRetryEpisodes, episodeProgressMap, false, firstEpisodeFocusRequester, if (seasons.size > 1) firstSeasonFocusRequester else heroSectionFocusRequester)
                     }
                 }
             }

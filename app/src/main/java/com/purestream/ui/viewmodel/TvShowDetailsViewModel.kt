@@ -382,8 +382,9 @@ class TvShowDetailsViewModel(
      * Analyze episode profanity for all filter levels at once, similar to movie analysis.
      * This provides comprehensive analysis and better consistency with movie behavior.
      */
-    fun analyzeEpisodeProfanityAllLevels(episode: Episode) {
-        analyzeEpisodeProfanityProgressive(episode, ProfanityFilterLevel.MILD)
+    fun analyzeEpisodeProfanityAllLevels(episode: Episode, priorityLevel: ProfanityFilterLevel = ProfanityFilterLevel.MILD) {
+        android.util.Log.d("TvShowDetailsViewModel", "analyzeEpisodeProfanityAllLevels called with priority level: $priorityLevel")
+        analyzeEpisodeProfanityProgressive(episode, priorityLevel)
     }
     
     /**

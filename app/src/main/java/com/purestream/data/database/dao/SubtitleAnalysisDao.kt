@@ -29,6 +29,9 @@ interface SubtitleAnalysisDao {
     @Query("DELETE FROM subtitle_analysis WHERE contentId = :contentId")
     suspend fun deleteAllAnalysesForContent(contentId: String)
     
+    @Query("SELECT * FROM subtitle_analysis WHERE createdAt < :cutoffTime")
+    suspend fun getOldAnalyses(cutoffTime: Long): List<SubtitleAnalysisEntity>
+
     @Query("DELETE FROM subtitle_analysis WHERE createdAt < :cutoffTime")
     suspend fun deleteOldAnalyses(cutoffTime: Long)
     

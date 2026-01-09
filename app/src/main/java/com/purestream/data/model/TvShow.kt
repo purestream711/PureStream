@@ -33,6 +33,8 @@ data class TvShow(
     val guid: List<GuidItem>? = emptyList(),
     @SerializedName("Image")
     val images: List<PlexImage>? = emptyList(),
+    @SerializedName("theme")
+    val theme: String? = null,
     val logoUrl: String? = null,
     val profanityLevel: ProfanityLevel? = ProfanityLevel.UNKNOWN
 ) {

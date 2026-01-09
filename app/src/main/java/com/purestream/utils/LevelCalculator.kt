@@ -5,8 +5,8 @@ package com.purestream.utils
  *
  * New level progression requirements:
  * - Level 1 → 2: 5 words
- * - Level 29 → 30: Reach 1000 total words
- * - Formula: totalWordsToReachLevel(n) = floor(1.05 * n^2 + 1.95 * n - 3.0)
+ * - Level 30: Reach 10,000 total words
+ * - Formula: totalWordsToReachLevel(n) = 5 * (n - 1)^2.257272
  * - Max Level: 30
  */
 object LevelCalculator {
@@ -32,12 +32,13 @@ object LevelCalculator {
      * Examples:
      * - Level 1: 0 words (starting level)
      * - Level 2: 5 words
-     * - Level 30: 1000 words
+     * - Level 30: 10,000 words
      */
     fun totalWordsToReachLevel(level: Int): Int {
         if (level <= 1) return 0
-        // Formula: floor(1.05 * n^2 + 1.95 * n - 3.0)
-        return (1.05 * level * level + 1.95 * level - 3.0).toInt()
+        // Formula: 5 * (level - 1)^2.257272
+        // Derived from constraints: W(1)=0, W(2)=5, W(30)=10000
+        return (5.0 * Math.pow((level - 1).toDouble(), 2.257272)).toInt()
     }
 
     /**

@@ -33,11 +33,41 @@ class SubtitleAnalysisRepository(
     }
     
     suspend fun getExistingFilterLevelsForContent(contentId: String): List<ProfanityFilterLevel> {
-        return dao.getExistingFilterLevelsForContent(contentId)
+        val allLevels = dao.getExistingFilterLevelsForContent(contentId)
+
+        // Filter to only include levels where the file actually exists on this device
+        return allLevels.filter { filterLevel ->
+            val analysis = dao.getAnalysisForContent(contentId, filterLevel)
+            val filePath = analysis?.filteredSubtitlePath
+            val fileExists = filePath?.let { File(it).exists() } ?: false
+
+            if (!fileExists && filePath != null) {
+                android.util.Log.w("SubtitleAnalysisRepository",
+                    "Database entry for $filterLevel exists but file missing: $filePath")
+            }
+
+            fileExists
+        }
     }
     
     suspend fun hasAnalysisForFilterLevel(contentId: String, filterLevel: ProfanityFilterLevel): Boolean {
-        val result = dao.getAnalysisForContent(contentId, filterLevel) != null
+        val analysis = dao.getAnalysisForContent(contentId, filterLevel)
+
+        // Check if analysis exists AND the file is actually present on this device
+        val result = if (analysis != null) {
+            val filePath = analysis.filteredSubtitlePath
+            val fileExists = filePath?.let { File(it).exists() } ?: false
+
+            if (!fileExists && filePath != null) {
+                android.util.Log.w("SubtitleAnalysisRepository",
+                    "Database entry exists but file missing (likely synced from another device): $filePath")
+            }
+
+            fileExists
+        } else {
+            false
+        }
+
         android.util.Log.d("SubtitleAnalysisRepository", "hasAnalysisForFilterLevel($contentId, $filterLevel) = $result")
         return result
     }
@@ -229,6 +259,26 @@ class SubtitleAnalysisRepository(
     
     suspend fun cleanupOldAnalyses(olderThanDays: Int = 30) {
         val cutoffTime = System.currentTimeMillis() - (olderThanDays * 24 * 60 * 60 * 1000L)
+        
+        // Get old analyses to clean up files
+        val oldAnalyses = dao.getOldAnalyses(cutoffTime)
+        android.util.Log.d("SubtitleAnalysisRepository", "Found ${oldAnalyses.size} old subtitle analyses to clean up")
+        
+        // Delete associated filtered subtitle files
+        oldAnalyses.forEach { analysis ->
+            analysis.filteredSubtitlePath?.let { path ->
+                try {
+                    val file = File(path)
+                    if (file.exists() && file.delete()) {
+                        android.util.Log.d("SubtitleAnalysisRepository", "Deleted old filtered subtitle file: $path")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("SubtitleAnalysisRepository", "Failed to delete old file $path: ${e.message}")
+                }
+            }
+        }
+        
+        // Delete from database
         dao.deleteOldAnalyses(cutoffTime)
     }
     

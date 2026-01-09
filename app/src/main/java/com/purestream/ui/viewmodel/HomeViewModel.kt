@@ -54,17 +54,21 @@ class HomeViewModel(
         val keyId = "featured_id_$profileId"
         val keyTs = "featured_ts_$profileId"
         
-        // Select new: Random Drama from last 20 years
+        // Select new: Random Action, Adventure, or Drama from last 20 years
         val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
         val startYear = currentYear - 20
         
         val candidates = allMovies.filter { movie ->
-            val isDrama = movie.genres?.any { it.tag.equals("Drama", ignoreCase = true) } == true
+            val isTargetGenre = movie.genres?.any { 
+                it.tag.equals("Drama", ignoreCase = true) || 
+                it.tag.equals("Action", ignoreCase = true) || 
+                it.tag.equals("Adventure", ignoreCase = true)
+            } == true
             val isRecent = (movie.year ?: 0) >= startYear
-            isDrama && isRecent
+            isTargetGenre && isRecent
         }
         
-        android.util.Log.d("HomeViewModel", "Found ${candidates.size} candidate featured movies (Drama, last 20 years)")
+        android.util.Log.d("HomeViewModel", "Found ${candidates.size} candidate featured movies (Action/Adventure/Drama, last 20 years)")
         
         val selected = if (candidates.isNotEmpty()) {
             candidates.random()

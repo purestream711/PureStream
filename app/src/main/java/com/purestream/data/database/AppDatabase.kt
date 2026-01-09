@@ -39,7 +39,7 @@ import android.content.Context
         CacheMetadataEntity::class,
         GeminiCachedMovie::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -117,6 +117,17 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Migration from version 20 to 21: Add theme column to cached_tv_shows
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                try {
+                     database.execSQL("ALTER TABLE cached_tv_shows ADD COLUMN theme TEXT DEFAULT NULL")
+                } catch (e: Exception) {
+                     // Ignore
+                }
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -129,7 +140,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_16_17, 
                     MIGRATION_17_18, 
                     MIGRATION_18_19, 
-                    MIGRATION_19_20
+                    MIGRATION_19_20,
+                    MIGRATION_20_21
                 )
                 // Keep fallback only as a last resort for extremely old versions
                 .fallbackToDestructiveMigration()

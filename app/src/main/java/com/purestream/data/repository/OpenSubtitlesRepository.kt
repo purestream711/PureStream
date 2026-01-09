@@ -1140,14 +1140,26 @@ class OpenSubtitlesRepository(
     suspend fun getExistingAnalysis(contentId: String, filterLevel: ProfanityFilterLevel): SubtitleAnalysisResult? {
         val analysisEntity = subtitleAnalysisRepository?.getAnalysisForContent(contentId, filterLevel)
             ?: return null
-            
+
+        // Verify the subtitle file actually exists on this device
+        // (database entry might be synced from another device via Android Auto Backup)
+        val filePath = analysisEntity.filteredSubtitlePath
+        if (filePath != null) {
+            val file = java.io.File(filePath)
+            if (!file.exists()) {
+                android.util.Log.w("OpenSubtitlesRepository",
+                    "Analysis exists in database but file missing (likely synced from another device): $filePath")
+                return null
+            }
+        }
+
         // Convert database entity back to analysis result using real stored data
         val detectedWords = try {
             gson.fromJson(analysisEntity.detectedWords, Array<String>::class.java).toList()
         } catch (e: Exception) {
             emptyList<String>()
         }
-        
+
         return SubtitleAnalysisResult(
             movieTitle = analysisEntity.contentTitle,
             episodeInfo = analysisEntity.showTitle?.let { showTitle ->

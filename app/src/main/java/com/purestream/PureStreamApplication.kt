@@ -33,6 +33,35 @@ class PureStreamApplication : Application(), ImageLoaderFactory {
         
         // Initialize premium status manager for cross-platform sync
         initializePremiumStatus()
+
+        // Schedule daily subtitle cleanup
+        scheduleSubtitleCleanup()
+    }
+
+    /**
+     * Schedules the subtitle cleanup worker to run daily
+     */
+    private fun scheduleSubtitleCleanup() {
+        try {
+            val cleanupRequest = androidx.work.PeriodicWorkRequestBuilder<com.purestream.workers.SubtitleCleanupWorker>(
+                24, java.util.concurrent.TimeUnit.HOURS
+            )
+            .setConstraints(
+                androidx.work.Constraints.Builder()
+                    .setRequiresStorageNotLow(true)
+                    .build()
+            )
+            .build()
+
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "SubtitleCleanupWork",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                cleanupRequest
+            )
+            Log.d(tag, "Scheduled subtitle cleanup worker")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to schedule subtitle cleanup worker", e)
+        }
     }
 
     /**

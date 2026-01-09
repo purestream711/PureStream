@@ -1,6 +1,7 @@
 package com.purestream.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -400,6 +401,18 @@ fun MovieDetailsScreen(
                             .padding(top = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(20.dp)
                     ) {
+                        // Progress Bar
+                        progressPercentage?.let { progress ->
+                            if (progress > 0f && progress < 0.90f) {
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                                    color = Color.White,
+                                    trackColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            }
+                        }
+
                         // Watch/Resume Button
                         Button(
                             onClick = { onPlayClick(progressPosition ?: 0L) },
@@ -440,26 +453,18 @@ fun MovieDetailsScreen(
                             }
                         }
 
-                        // Progress Bar
-                        progressPercentage?.let { progress ->
-                            if (progress > 0f && progress < 0.90f) {
-                                LinearProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                                    color = Color.White,
-                                    trackColor = Color.White.copy(alpha = 0.2f)
-                                )
-                            }
-                        }
-
                         // Summary
+                        var isDescriptionExpanded by remember { mutableStateOf(false) }
                         Text(
                             text = movie.summary ?: "",
                             fontSize = 16.sp,
                             color = Color.White.copy(alpha = 0.8f),
                             lineHeight = 24.sp,
-                            maxLines = 6,
-                            overflow = TextOverflow.Ellipsis
+                            maxLines = if (isDescriptionExpanded) Int.MAX_VALUE else 6,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clickable { isDescriptionExpanded = !isDescriptionExpanded }
+                                .animateContentSize()
                         )
 
                         // Studio (if available)

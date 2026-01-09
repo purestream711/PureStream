@@ -214,10 +214,35 @@ fun VLCMediaPlayer(
             Log.d("VLCMediaPlayer", "Loading media from URL: $videoUrl")
             val uri = android.net.Uri.parse(videoUrl)
             Log.d("VLCMediaPlayer", "Parsed URI: $uri")
-            
+
             val media = Media(vlc, uri)
             Log.d("VLCMediaPlayer", "Media object created")
-            
+
+            // Enable hardware decoder for HDR support (4K/8K with proper color handling)
+            try {
+                media.setHWDecoderEnabled(true, true)
+                Log.d("VLCMediaPlayer", "Hardware decoder enabled for HDR support")
+            } catch (e: Exception) {
+                Log.w("VLCMediaPlayer", "Could not enable hardware decoder: ${e.message}")
+            }
+
+            // Add HDR-specific codec options for proper color space handling
+            try {
+                // Use MediaCodec for HDR support on Android
+                media.addOption(":codec=mediacodec_ndk,mediacodec,all")
+                Log.d("VLCMediaPlayer", "Added MediaCodec options for HDR")
+
+                // Enable hardware acceleration for better HDR performance
+                media.addOption(":avcodec-hw=any")
+                Log.d("VLCMediaPlayer", "Enabled hardware acceleration")
+
+                // Ensure proper color transfer for HDR content
+                media.addOption(":android-display-chroma")
+                Log.d("VLCMediaPlayer", "Enabled Android display chroma for HDR colors")
+            } catch (e: Exception) {
+                Log.w("VLCMediaPlayer", "Could not add HDR codec options: ${e.message}")
+            }
+
             // Disable embedded subtitles to prevent overlap with filtered subtitles
             try {
                 val subtitleTrackOption = ":sub-track-id=${Integer.MAX_VALUE}"
@@ -226,7 +251,7 @@ fun VLCMediaPlayer(
             } catch (e: Exception) {
                 Log.w("VLCMediaPlayer", "Could not add subtitle disable option: ${e.message}")
             }
-            
+
             // Set media with embedded subtitles disabled
             player.media = media
             media.release() // Release media reference as player now owns it

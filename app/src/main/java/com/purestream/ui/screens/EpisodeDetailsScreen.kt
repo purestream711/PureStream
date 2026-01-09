@@ -1,6 +1,7 @@
 package com.purestream.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -40,8 +41,10 @@ import com.purestream.data.model.*
 import com.purestream.ui.components.DemoModePlaybackBlockedDialog
 import com.purestream.ui.theme.getAnimatedButtonBackgroundColor
 import com.purestream.utils.rememberIsMobile
+import com.purestream.utils.SoundManager
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalContext
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -66,6 +69,14 @@ fun EpisodeDetailsScreen(
     val isMobile = rememberIsMobile()
     val playButtonFocusRequester = remember { FocusRequester() }
     var showDemoModeDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val soundManager = remember { SoundManager.getInstance(context) }
+
+    val handlePlayClick: (Long) -> Unit = { position ->
+        soundManager.stopThemeMusic()
+        onPlayClick(position)
+    }
     
     // Animation state
     var contentVisible by remember { mutableStateOf(false) }
@@ -252,7 +263,45 @@ fun EpisodeDetailsScreen(
                              Text(episode.title, fontSize = 28.sp, fontWeight = FontWeight.Black, color = Color.White, lineHeight = 34.sp)
                              Spacer(Modifier.height(8.dp))
                              val episodeText = if (episode.seasonNumber == 0) "Specials:E${episode.episodeNumber}" else "S${episode.seasonNumber} E${episode.episodeNumber}"
-                             Text("$episodeText  •  ${formatDuration(episode.duration ?: 0)}", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+
+                             // Episode info with protection status badge
+                             Row(
+                                 verticalAlignment = Alignment.CenterVertically,
+                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
+                             ) {
+                                 Text(
+                                     "$episodeText  •  ${formatDuration(episode.duration ?: 0)}",
+                                     color = Color.White.copy(alpha = 0.8f),
+                                     fontSize = 14.sp,
+                                     fontWeight = FontWeight.Bold
+                                 )
+
+                                 // Protection Status Badge (Mobile)
+                                 val isAnalyzed = !canAnalyzeProfanity
+                                 Row(
+                                     verticalAlignment = Alignment.CenterVertically,
+                                     modifier = Modifier
+                                         .background(
+                                             if (isAnalyzed) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFEF4444).copy(alpha = 0.2f),
+                                             RoundedCornerShape(4.dp)
+                                         )
+                                         .padding(horizontal = 6.dp, vertical = 2.dp)
+                                 ) {
+                                     Icon(
+                                         imageVector = if (isAnalyzed) Icons.Default.Lock else Icons.Default.LockOpen,
+                                         contentDescription = null,
+                                         tint = if (isAnalyzed) Color(0xFF10B981) else Color(0xFFEF4444),
+                                         modifier = Modifier.size(14.dp)
+                                     )
+                                     Spacer(Modifier.width(4.dp))
+                                     Text(
+                                         text = if (isAnalyzed) "Protected" else "Unprotected",
+                                         color = Color.White,
+                                         fontWeight = FontWeight.Bold,
+                                         fontSize = 14.sp
+                                     )
+                                 }
+                             }
                          }
                     }
                     
@@ -279,7 +328,7 @@ fun EpisodeDetailsScreen(
                         // Buttons
                         val isResume = progressPercentage != null && progressPercentage > 0f && progressPercentage < 0.9f
                          Button(
-                            onClick = { onPlayClick(if (isResume) progressPosition ?: 0L else 0L) },
+                            onClick = { handlePlayClick(if (isResume) progressPosition ?: 0L else 0L) },
                             modifier = Modifier.fillMaxWidth().height(56.dp).focusRequester(playButtonFocusRequester),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8B5CF6)),
                             shape = RoundedCornerShape(16.dp)
@@ -291,7 +340,7 @@ fun EpisodeDetailsScreen(
                         
                         if (isResume) {
                              OutlinedButton(
-                                onClick = { onPlayClick(0L) },
+                                onClick = { handlePlayClick(0L) },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 shape = RoundedCornerShape(16.dp),
                                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
@@ -303,7 +352,18 @@ fun EpisodeDetailsScreen(
                             }
                         }
 
-                        Text(episode.summary ?: "", color = Color.White.copy(alpha = 0.8f), fontSize = 16.sp, lineHeight = 24.sp)
+                        var isDescriptionExpanded by remember { mutableStateOf(false) }
+                        Text(
+                            text = episode.summary ?: "",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 16.sp,
+                            lineHeight = 24.sp,
+                            maxLines = if (isDescriptionExpanded) Int.MAX_VALUE else 6,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clickable { isDescriptionExpanded = !isDescriptionExpanded }
+                                .animateContentSize()
+                        )
                         
                         // Analysis Section (Glass Panel Tile)
                         val (lvl, _, _) = com.purestream.utils.LevelCalculator.calculateLevel(currentProfile?.totalFilteredWordsCount ?: 0)
@@ -459,19 +519,31 @@ fun EpisodeDetailsScreen(
                                 )
                             }
                             
-                            // Progress Text (if started)
+                            // Progress Indicator (below description, above buttons)
                             progressPercentage?.let { progress ->
                                 if (progress > 0f && progress < 0.90f) {
                                     val totalDurationMs = episode.duration ?: 0L
                                     val remainingMs = ((1f - progress) * totalDurationMs).toLong()
                                     val remainingMinutes = (remainingMs / (1000 * 60)).toInt()
 
-                                    Text(
-                                        text = "${remainingMinutes}m left",
-                                        fontSize = 11.sp,
-                                        color = Color.White.copy(alpha = 0.7f),
-                                        fontWeight = FontWeight.Medium
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        modifier = Modifier.fillMaxWidth(0.8f)
+                                    ) {
+                                        LinearProgressIndicator(
+                                            progress = { progress },
+                                            modifier = Modifier.weight(1f).height(4.dp),
+                                            color = Color.White,
+                                            trackColor = Color.White.copy(alpha = 0.2f)
+                                        )
+                                        Text(
+                                            text = "${remainingMinutes}m left",
+                                            fontSize = 11.sp,
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
                             }
 
@@ -488,7 +560,7 @@ fun EpisodeDetailsScreen(
                                 val isActuallyFocused by interactionSource.collectIsFocusedAsState()
 
                                 Surface(
-                                    onClick = { onPlayClick(if (isResume) progressPosition ?: 0L else 0L) },
+                                    onClick = { handlePlayClick(if (isResume) progressPosition ?: 0L else 0L) },
                                     modifier = Modifier
                                         .height(28.dp)
                                         .focusRequester(playButtonFocusRequester)
@@ -518,7 +590,7 @@ fun EpisodeDetailsScreen(
                                     val isRestartFocused by restartInteractionSource.collectIsFocusedAsState()
 
                                     Surface(
-                                        onClick = { onPlayClick(0L) },
+                                        onClick = { handlePlayClick(0L) },
                                         modifier = Modifier
                                             .size(28.dp)
                                             .focusable(interactionSource = restartInteractionSource),
@@ -635,7 +707,7 @@ fun EpisodeDetailsScreen(
                              verticalArrangement = Arrangement.Top
                         ) {
                              Box(modifier = Modifier.width(400.dp)) {
-                                 EpisodeHeaderSection(episode, tvShowTitle, progressPercentage, false)
+                                 EpisodeHeaderSection(episode, tvShowTitle, false)
                              }
                         }
                     }
@@ -653,7 +725,6 @@ fun EpisodeDetailsScreen(
 private fun EpisodeHeaderSection(
     episode: Episode,
     tvShowTitle: String,
-    progressPercentage: Float?,
     isMobile: Boolean
 ) {
     // Glass panel styling for thumbnail
@@ -680,17 +751,6 @@ private fun EpisodeHeaderSection(
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
-
-        progressPercentage?.let { progress ->
-            if (progress < 0.90f) {
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(6.dp).align(Alignment.BottomCenter),
-                    color = Color.White,
-                    trackColor = Color.Black.copy(alpha = 0.5f)
-                )
-            }
-        }
     }
 }
 

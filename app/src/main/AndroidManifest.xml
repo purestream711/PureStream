@@ -44,6 +44,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:colorMode="wideColorGamut"
             android:windowSoftInputMode="adjustNothing"
             android:supportsPictureInPicture="true"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation">

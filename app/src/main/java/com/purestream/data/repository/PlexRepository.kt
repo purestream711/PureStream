@@ -740,6 +740,7 @@ class PlexRepository(private val context: Context) {
                         thumbUrl = buildImageUrl(show.thumbUrl),
                         artUrl = buildImageUrl(show.artUrl),
                         logoUrl = buildImageUrl(logoUrl),
+                        theme = buildImageUrl(show.theme),
                         profanityLevel = show.profanityLevel ?: ProfanityLevel.UNKNOWN
                     )
                 }
@@ -1518,7 +1519,8 @@ class PlexRepository(private val context: Context) {
                     show.copy(
                         thumbUrl = buildImageUrl(show.thumbUrl),
                         artUrl = buildImageUrl(show.artUrl),
-                        logoUrl = buildImageUrl(logoUrl)
+                        logoUrl = buildImageUrl(logoUrl),
+                        theme = buildImageUrl(show.theme)
                     )
                 }
                 Result.success(tvShow)
@@ -1669,7 +1671,8 @@ class PlexRepository(private val context: Context) {
                 val showsWithFullUrls = shows.map { show ->
                     show.copy(
                         thumbUrl = buildImageUrl(show.thumbUrl),
-                        artUrl = buildImageUrl(show.artUrl)
+                        artUrl = buildImageUrl(show.artUrl),
+                        theme = buildImageUrl(show.theme)
                     )
                 }
                 Result.success(showsWithFullUrls)

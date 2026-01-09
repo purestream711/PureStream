@@ -12,6 +12,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.hoverable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.activity.compose.BackHandler
 import org.videolan.libvlc.MediaPlayer as VLCMediaPlayer
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -107,6 +112,18 @@ fun MediaPlayerScreen(
     val actualMovie = storedMovie ?: movie
     val actualEpisode = storedEpisode ?: episode
     val actualTvShow = storedTvShow ?: tvShow
+
+    val logoUrl = remember(actualMovie, actualTvShow, actualEpisode) {
+        // Try to get clearLogo from movie
+        actualMovie?.logoUrl?.takeIf { it.isNotEmpty() }
+            ?: actualMovie?.images?.find { it.type == "clearLogo" }?.url
+            // Try to get clearLogo from tv show (for episode)
+            ?: actualTvShow?.logoUrl?.takeIf { it.isNotEmpty() }
+            ?: actualTvShow?.images?.find { it.type == "clearLogo" }?.url
+            // Try to get clearLogo from episode (rare)
+            ?: actualEpisode?.logoUrl?.takeIf { it.isNotEmpty() }
+            ?: actualEpisode?.images?.find { it.type == "clearLogo" }?.url
+    }
 
     android.util.Log.d("MediaPlayerScreen", "Retrieved media objects: movie=${actualMovie?.title}, episode=${actualEpisode?.title}, tvShow=${actualTvShow?.title}")
 
@@ -185,6 +202,8 @@ fun MediaPlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var duration by remember { mutableStateOf(0L) }
     var showControls by remember { mutableStateOf(true) } // Start visible after loading
+    var autoHideTrigger by remember { mutableStateOf(0) } // Trigger to reset auto-hide timer
+    var showTemporaryPadlock by remember { mutableStateOf(false) } // Show padlock when it turns green
     var showGearMenu by remember { mutableStateOf(false) }
     var retryCount by remember { mutableIntStateOf(0) }
 
@@ -481,10 +500,20 @@ fun MediaPlayerScreen(
     }
     
     // Auto-hide controls after 5 seconds of no interaction (not in PiP mode)
-    LaunchedEffect(showControls, isInPipMode) {
+    LaunchedEffect(showControls, isInPipMode, autoHideTrigger) {
         if (showControls && !isInPipMode) {
             delay(5000) // Hide after 5 seconds
             showControls = false
+        }
+    }
+
+    // Show padlock for 3 seconds when it turns green and UI is hidden
+    val isContentProtected = (playerState.hasAnalysis && currentFilterLevel != ProfanityFilterLevel.NONE) || contentId.startsWith("demo_")
+    LaunchedEffect(isContentProtected) {
+        if (isContentProtected && !showControls) {
+            showTemporaryPadlock = true
+            delay(3000)
+            showTemporaryPadlock = false
         }
     }
     
@@ -700,52 +729,85 @@ fun MediaPlayerScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Mobile double-tap seek zones (invisible overlays)
-            if (isMobile) {
-                Row(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    // Left seek zone (backward 10s)
-                    Box(
-                        modifier = Modifier
-                            .weight(0.3f)
-                            .fillMaxHeight()
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onDoubleTap = {
-                                        viewModel.seekBackward(10)
-                                        android.util.Log.d("MediaPlayerScreen", "Double-tap left: seek backward 10s")
-                                    }
-                                )
-                            }
-                    )
-
-                    // Center zone (no action)
-                    Box(
-                        modifier = Modifier
-                            .weight(0.4f)
-                            .fillMaxHeight()
-                    )
-
-                    // Right seek zone (forward 10s)
-                    Box(
-                        modifier = Modifier
-                            .weight(0.3f)
-                            .fillMaxHeight()
-                            .pointerInput(Unit) {
-                                detectTapGestures(
-                                    onDoubleTap = {
-                                        viewModel.seekForward(10)
-                                        android.util.Log.d("MediaPlayerScreen", "Double-tap right: seek forward 10s")
-                                    }
-                                )
-                            }
-                    )
-                }
-            }
+            // Mobile double-tap seek zones are now handled by the unified MobileTouchOverlay below
         }
         }
         
+        // Unified Mobile Touch Overlay - Handles both single tap (toggle controls) and double tap (seek)
+        if (isMobile && !isInPipMode) {
+            val modifier = if (showControls) {
+                 Modifier
+                     .fillMaxWidth()
+                     .fillMaxHeight(0.7f) // Leave bottom 30% for controls when visible
+                     .align(Alignment.TopCenter)
+            } else {
+                 Modifier.fillMaxSize()
+            }
+
+            Row(modifier = modifier) {
+                // Left 30% - Double tap back, Single tap toggle
+                Box(
+                    modifier = Modifier
+                        .weight(0.3f)
+                        .fillMaxHeight()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    viewModel.seekBackward(10)
+                                    android.util.Log.d("MediaPlayerScreen", "Double-tap left: seek backward 10s")
+                                },
+                                onTap = {
+                                    showControls = !showControls
+                                }
+                            )
+                        }
+                )
+                
+                // Center 40% - Single tap toggle only
+                Box(
+                    modifier = Modifier
+                        .weight(0.4f)
+                        .fillMaxHeight()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = {
+                                    showControls = !showControls
+                                }
+                            )
+                        }
+                )
+                
+                // Right 30% - Double tap forward, Single tap toggle
+                Box(
+                    modifier = Modifier
+                        .weight(0.3f)
+                        .fillMaxHeight()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    viewModel.seekForward(10)
+                                    android.util.Log.d("MediaPlayerScreen", "Double-tap right: seek forward 10s")
+                                },
+                                onTap = {
+                                    showControls = !showControls
+                                }
+                            )
+                        }
+                )
+            }
+        } else if (!isMobile) {
+            // TV: Keep existing fullscreen toggle behavior for D-pad compatibility
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Transparent)
+                    .clickable {
+                        android.util.Log.d("MediaPlayerScreen", "TV fullscreen tap - toggling controls")
+                        showControls = !showControls
+                    }
+            )
+        }
+
         // Subtitle handling is now done internally by VLCMediaPlayer component
 
         // Debug overlay removed for cleaner UI
@@ -797,6 +859,8 @@ fun MediaPlayerScreen(
                 onSubtitleToggle = {
                     viewModel.toggleSubtitles()
                 },
+                onInteraction = { autoHideTrigger++ },
+                logoUrl = logoUrl,
                 onBackClick = {
                     // Set exit flag to prevent PiP mode when user explicitly exits
                     isExiting = true
@@ -836,6 +900,7 @@ fun MediaPlayerScreen(
             GearMenuDialog(
                 currentFilterLevel = currentFilterLevel,
                 subtitlesEnabled = playerState.subtitlesEnabled,
+                hasAnalysis = playerState.hasAnalysis,
                 onFilterLevelChange = onFilterLevelChange,
                 onSubtitleToggle = {
                     viewModel.toggleSubtitles()
@@ -850,33 +915,17 @@ fun MediaPlayerScreen(
                 currentProfile = currentProfile
             )
         }
-        
-        // Click to toggle controls - Platform-specific behavior
-        if (isMobile) {
-            // Mobile: Background tap only when UI is hidden to show controls
-            // When UI is visible, buttons handle their own touch events without interference
-            if (!showControls) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Transparent)
-                        .clickable {
-                            android.util.Log.d("MediaPlayerScreen", "Mobile background tap - showing controls")
-                            showControls = true
-                        }
-                )
-            }
-        } else {
-            // TV: Keep existing fullscreen toggle behavior for D-pad compatibility
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Transparent)
-                    .clickable {
-                        android.util.Log.d("MediaPlayerScreen", "TV fullscreen tap - toggling controls")
-                        showControls = !showControls
-                    }
-            )
+
+        // Temporary Security Padlock Overlay (top right)
+        AnimatedVisibility(
+            visible = showTemporaryPadlock && !showControls && !isInPipMode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(32.dp)
+        ) {
+            SecurityPadlock(isContentProtected = true)
         }
     }
 
@@ -936,6 +985,8 @@ fun PlayerControls(
     onSubtitleAlignmentChange: (Float) -> Unit,
     onSubtitleToggle: () -> Unit,
     onBackClick: () -> Unit,
+    onInteraction: () -> Unit = {},
+    logoUrl: String? = null,
     modifier: Modifier = Modifier
 ) {
     val isMobile = rememberIsMobile()
@@ -953,32 +1004,30 @@ fun PlayerControls(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = title,
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f)
-            )
+            if (logoUrl != null) {
+                AsyncImage(
+                    model = logoUrl,
+                    contentDescription = title,
+                    modifier = Modifier
+                        .height(45.dp)
+                        .widthIn(max = 180.dp),
+                    contentScale = ContentScale.Fit,
+                    alignment = Alignment.CenterStart
+                )
+            } else {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             
             // Analysis Status Padlock (green if analysis complete and filter enabled, red otherwise)
             // Force green for demo content
             val isContentProtected = (hasAnalysis && currentFilterLevel != ProfanityFilterLevel.NONE) || isDemoContent
-            Box(
-                modifier = Modifier
-                    .background(
-                        color = if (isContentProtected) Color(0xFF10B981).copy(alpha = 0.8f) else Color(0xFFEF4444).copy(alpha = 0.8f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .padding(8.dp)
-            ) {
-                Icon(
-                    if (isContentProtected) Icons.Default.Lock else Icons.Default.LockOpen,
-                    contentDescription = if (isContentProtected) "Content Protected" else "Content Not Protected",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
+            SecurityPadlock(isContentProtected = isContentProtected)
         }
         
         // Bottom Controls
@@ -996,6 +1045,7 @@ fun PlayerControls(
                     Slider(
                         value = progress,
                         onValueChange = { newProgress ->
+                            onInteraction()
                             onSeek((newProgress.toDouble() * duration.toDouble()).toLong())
                         },
                         colors = SliderDefaults.colors(
@@ -1025,16 +1075,40 @@ fun PlayerControls(
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            // Bottom Row - Play/Pause Center, Gear Right
+            // Bottom Row - Centered and Grouped Controls
             Box(
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Play/Pause Button - Truly Centered
+                // 1. Back Button - Left Side (Mobile Only)
+                if (isMobile) {
+                    var backButtonHovered by remember { mutableStateOf(false) }
+                    val backButtonInteractionSource = remember { MutableInteractionSource() }
+
+                    IconButton(
+                        onClick = onBackClick,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .animatedProfileBorder(
+                                borderWidth = 2.dp,
+                                interactionSource = backButtonInteractionSource
+                            )
+                            .hoverable(backButtonInteractionSource)
+                            .size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+
+                // 2. Play/Pause Button - Truly Centered
                 var playButtonHovered by remember { mutableStateOf(false) }
                 val playButtonInteractionSource = remember { MutableInteractionSource() }
                 
                 if (isMobile) {
-                    // Mobile: Use standard Material3 IconButton for proper touch handling
                     IconButton(
                         onClick = onPlayPause,
                         modifier = Modifier
@@ -1054,14 +1128,16 @@ fun PlayerControls(
                         )
                     }
                 } else {
-                    // TV: Custom glassy button style
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .align(Alignment.Center)
                             .focusRequester(focusRequester)
                             .size(34.dp)
-                            .onFocusChanged { playButtonHovered = it.isFocused }
+                            .onFocusChanged { 
+                                playButtonHovered = it.isFocused
+                                if (it.isFocused) onInteraction()
+                            }
                             .focusable(interactionSource = playButtonInteractionSource)
                             .clickable(
                                 interactionSource = playButtonInteractionSource,
@@ -1087,96 +1163,136 @@ fun PlayerControls(
                     }
                 }
 
-                // Back Button - Left Side (Mobile Only)
-                if (isMobile) {
-                    var backButtonHovered by remember { mutableStateOf(false) }
-                    val backButtonInteractionSource = remember { MutableInteractionSource() }
+                // 3. Right Group (Subtitle Toggle and Settings)
+                Row(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    horizontalArrangement = Arrangement.spacedBy(if (isMobile) 8.dp else 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Subtitle Toggle Button
+                    var subtitleButtonHovered by remember { mutableStateOf(false) }
+                    val subtitleButtonInteractionSource = remember { MutableInteractionSource() }
+                    val isSubtitleActive = subtitlesEnabled && hasAnalysis
 
-                    IconButton(
-                        onClick = onBackClick,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .animatedProfileBorder(
-                                borderWidth = 2.dp,
-                                interactionSource = backButtonInteractionSource
+                    if (isMobile) {
+                        IconButton(
+                            onClick = onSubtitleToggle,
+                            enabled = hasAnalysis,
+                            modifier = Modifier
+                                .animatedProfileBorder(
+                                    borderWidth = 2.dp,
+                                    interactionSource = subtitleButtonInteractionSource
+                                )
+                                .hoverable(subtitleButtonInteractionSource)
+                                .size(48.dp)
+                        ) {
+                            Icon(
+                                if (subtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                                contentDescription = "Toggle Subtitles",
+                                tint = if (!hasAnalysis) Color.White.copy(alpha = 0.5f) else if (isSubtitleActive) Color(0xFF10B981) else Color.White,
+                                modifier = Modifier.size(24.dp)
                             )
-                            .hoverable(backButtonInteractionSource)
-                            .size(48.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-
-                // Gear Button - Right Side
-                var gearButtonHovered by remember { mutableStateOf(false) }
-                val gearButtonInteractionSource = remember { MutableInteractionSource() }
-
-                if (isMobile) {
-                    // Mobile: Use standard Material3 IconButton for proper touch handling
-                    IconButton(
-                        onClick = onGearClick,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .animatedProfileBorder(
-                                borderWidth = 2.dp,
-                                interactionSource = gearButtonInteractionSource
-                            )
-                            .hoverable(gearButtonInteractionSource)
-                            .size(48.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                } else {
-                    // TV: Custom glassy button style
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .size(34.dp)
-                            .onFocusChanged { gearButtonHovered = it.isFocused }
-                            .focusable(interactionSource = gearButtonInteractionSource)
-                            .onKeyEvent { keyEvent ->
-                                // Handle D-pad center press explicitly for TV remote compatibility
-                                if (keyEvent.type == KeyEventType.KeyUp && 
-                                    (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter)) {
-                                    android.util.Log.d("MediaPlayerScreen", "D-pad center pressed on gear button - triggering settings")
-                                    onGearClick()
-                                    true
-                                } else {
-                                    false
+                        }
+                    } else {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .onFocusChanged { 
+                                    subtitleButtonHovered = it.isFocused
+                                    if (it.isFocused) onInteraction()
                                 }
-                            }
-                            .clickable(
-                                interactionSource = gearButtonInteractionSource,
-                                indication = null,
-                                onClick = onGearClick
+                                .focusable(interactionSource = subtitleButtonInteractionSource)
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyUp && 
+                                        (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter)) {
+                                        onSubtitleToggle()
+                                        true
+                                    } else false
+                                }
+                                .clickable(
+                                    interactionSource = subtitleButtonInteractionSource,
+                                    indication = null,
+                                    enabled = hasAnalysis,
+                                    onClick = onSubtitleToggle
+                                )
+                                .background(
+                                    color = if (subtitleButtonHovered) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                                    shape = CircleShape
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White.copy(alpha = 0.3f),
+                                    shape = CircleShape
+                                )
+                        ) {
+                            Icon(
+                                if (subtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
+                                contentDescription = "Toggle Subtitles",
+                                tint = if (!hasAnalysis) Color.White.copy(alpha = 0.5f) else if (isSubtitleActive) Color(0xFF10B981) else Color.White,
+                                modifier = Modifier.size(17.dp)
                             )
-                            .background(
-                                color = if (gearButtonHovered) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
-                                shape = CircleShape
+                        }
+                    }
+
+                    // Gear (Settings) Button
+                    var gearButtonHovered by remember { mutableStateOf(false) }
+                    val gearButtonInteractionSource = remember { MutableInteractionSource() }
+
+                    if (isMobile) {
+                        IconButton(
+                            onClick = onGearClick,
+                            modifier = Modifier
+                                .animatedProfileBorder(
+                                    borderWidth = 2.dp,
+                                    interactionSource = gearButtonInteractionSource
+                                )
+                                .hoverable(gearButtonInteractionSource)
+                                .size(48.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
                             )
-                            .border(
-                                width = 1.dp,
-                                color = Color.White.copy(alpha = 0.3f),
-                                shape = CircleShape
+                        }
+                    } else {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .onFocusChanged { gearButtonHovered = it.isFocused }
+                                .focusable(interactionSource = gearButtonInteractionSource)
+                                .onKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyUp && 
+                                        (keyEvent.key == Key.DirectionCenter || keyEvent.key == Key.Enter)) {
+                                        onGearClick()
+                                        true
+                                    } else false
+                                }
+                                .clickable(
+                                    interactionSource = gearButtonInteractionSource,
+                                    indication = null,
+                                    onClick = onGearClick
+                                )
+                                .background(
+                                    color = if (gearButtonHovered) Color(0xFF8B5CF6) else Color.White.copy(alpha = 0.1f),
+                                    shape = CircleShape
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White.copy(alpha = 0.3f),
+                                    shape = CircleShape
+                                )
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(17.dp)
                             )
-                    ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color.White,
-                            modifier = Modifier.size(17.dp)
-                        )
+                        }
                     }
                 }
             }
@@ -1188,6 +1304,7 @@ fun PlayerControls(
 fun GearMenuDialog(
     currentFilterLevel: ProfanityFilterLevel,
     subtitlesEnabled: Boolean,
+    hasAnalysis: Boolean = false,
     onFilterLevelChange: (ProfanityFilterLevel) -> Unit,
     onSubtitleToggle: () -> Unit,
     onTimingAdjust: (Long) -> Unit,
@@ -1202,155 +1319,127 @@ fun GearMenuDialog(
         modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(28.dp)),
         text = {
             val columnModifier = if (isMobile) {
-                Modifier
-                    .height(250.dp)
+                Modifier // Start the chain with the Modifier object
+                    .height(220.dp)
                     .verticalScroll(rememberScrollState())
             } else {
                 Modifier
+                    .height(300.dp)
+                    .verticalScroll(rememberScrollState())
             }
-            
+
             Column(
                 modifier = columnModifier,
-                verticalArrangement = Arrangement.spacedBy(if (isMobile) 8.dp else 12.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Subtitle Toggle Section
-                Column {
+                // Profanity Filter Level Section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Subtitles",
-                        fontSize = if (isMobile) 10.sp else 14.sp,
+                        text = "Profanity Filter Level", // Provide the text to display
+                        fontSize = if (isMobile) 12.sp else 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White
+                    )
+                    // ... other composables for this section can go here
+                }
+
+                // Subtitle Timing Section
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Subtitle Timing",
+                        fontSize = if (isMobile) 12.sp else 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White
                     )
                     
-                    var subtitleToggleHovered by remember { mutableStateOf(false) }
-                    val subtitleToggleInteractionSource = remember { MutableInteractionSource() }
+                    Text(
+                        text = "Current offset: ${currentOffset}ms",
+                        fontSize = if (isMobile) 10.sp else 12.sp,
+                        color = Color.Gray
+                    )
                     
-                    if (isMobile) {
-                        // Mobile: Use Material3 Button for proper touch handling
-                        Button(
-                            onClick = onSubtitleToggle,
-                            modifier = Modifier
-                                .animatedProfileBorder(
-                                    borderWidth = 2.dp,
-                                    interactionSource = subtitleToggleInteractionSource
-                                )
-                                .hoverable(subtitleToggleInteractionSource)
-                                .height(32.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (subtitlesEnabled) Color(0xFF10B981) else Color(0xFF374151),
-                                contentColor = Color.White
-                            )
-                        ) {
-                            Icon(
-                                if (subtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
-                                contentDescription = null,
-                                modifier = Modifier.size(10.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (subtitlesEnabled) "Hide Subtitles" else "Show Subtitles",
-                                fontSize = 10.sp
-                            )
-                        }
-                    } else {
-                        // TV: Keep existing TvButton for D-pad focus management
-                        TvButton(
-                            onClick = onSubtitleToggle,
-                            modifier = Modifier
-                                .animatedProfileBorder(
-                                    borderWidth = 2.dp,
-                                    interactionSource = subtitleToggleInteractionSource
-                                )
-                                .hoverable(subtitleToggleInteractionSource)
-                                .focusable(interactionSource = subtitleToggleInteractionSource)
-                                .onFocusChanged { subtitleToggleHovered = it.isFocused },
-                            colors = TvButtonDefaults.colors(
-                                containerColor = if (subtitlesEnabled) Color(0xFF10B981).copy(alpha = 0.3f) else Color.White.copy(alpha = 0.1f),
-                                focusedContainerColor = if (subtitlesEnabled) Color(0xFF10B981) else Color(0xFF8B5CF6),
-                                contentColor = Color.White
-                            )
-                        ) {
-                            Icon(
-                                if (subtitlesEnabled) Icons.Default.Subtitles else Icons.Default.SubtitlesOff,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (subtitlesEnabled) "Hide Subtitles" else "Show Subtitles")
-                        }
+                    // Helper labels
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Move Earlier (-)",
+                            color = Color(0xFFEF4444),
+                            fontSize = if (isMobile) 10.sp else 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Move Later (+)",
+                            color = Color(0xFF10B981),
+                            fontSize = if (isMobile) 10.sp else 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
-                }
-                
-                // Subtitle Timing Section (only show when subtitles enabled)
-                if (subtitlesEnabled) {
-                    Column {
-                        Text(
-                            text = "Subtitle Timing",
-                            fontSize = if (isMobile) 10.sp else 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White
-                        )
-                        
-                        Text(
-                            text = "Current offset: ${currentOffset}ms",
-                            fontSize = if (isMobile) 8.sp else 12.sp,
-                            color = Color.Gray
-                        )
-                        
-                        // Timing adjustment buttons
-                        val timingOptions = listOf(
-                            "-5s" to -5000L,
-                            "-1s" to -1000L,
-                            "+1s" to 1000L,
-                            "+5s" to 5000L
-                        )
-                        
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(if (isMobile) 4.dp else 8.dp)
-                        ) {
-                            for ((label, adjustment) in timingOptions) {
+                    
+                    val timingOptions = listOf(
+                        "-5s" to -5000L,
+                        "-1s" to -1000L,
+                        "-0.5s" to -500L,
+                        "+0.5s" to 500L,
+                        "+1s" to 1000L,
+                        "+5s" to 5000L
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(if (isMobile) 8.dp else 8.dp, Alignment.CenterHorizontally)
+                    ) {
+                        for ((label, adjustment) in timingOptions) {
+                            val timingButtonInteractionSource = remember { MutableInteractionSource() }
+                            val isEnabled = hasAnalysis
+                            
+                            if (isMobile) {
+                                Button(
+                                    onClick = { onTimingAdjust(adjustment) },
+                                    enabled = isEnabled,
+                                    modifier = Modifier
+                                        .animatedProfileBorder(
+                                            borderWidth = 2.dp,
+                                            interactionSource = timingButtonInteractionSource
+                                        )
+                                        .hoverable(timingButtonInteractionSource)
+                                        .height(28.dp)
+                                        .width(38.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981),
+                                        contentColor = Color.White,
+                                        disabledContainerColor = (if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981)).copy(alpha = 0.2f),
+                                        disabledContentColor = Color.White.copy(alpha = 0.3f)
+                                    )
+                                ) {
+                                    Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
                                 var timingButtonHovered by remember { mutableStateOf(false) }
-                                val timingButtonInteractionSource = remember { MutableInteractionSource() }
-                                
-                                if (isMobile) {
-                                    // Mobile: Use Material3 Button for proper touch handling
-                                    Button(
-                                        onClick = { onTimingAdjust(adjustment) },
-                                        modifier = Modifier
-                                            .animatedProfileBorder(
-                                                borderWidth = 2.dp,
-                                                interactionSource = timingButtonInteractionSource
-                                            )
-                                            .hoverable(timingButtonInteractionSource)
-                                            .height(36.dp)
-                                            .width(65.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981),
-                                            contentColor = Color.White
+                                TvButton(
+                                    onClick = { onTimingAdjust(adjustment) },
+                                    enabled = isEnabled,
+                                    modifier = Modifier
+                                        .animatedProfileBorder(
+                                            borderWidth = 2.dp,
+                                            interactionSource = timingButtonInteractionSource
                                         )
-                                    ) {
-                                        Text(label, fontSize = 10.sp)
-                                    }
-                                } else {
-                                    // TV: Keep existing TvButton for D-pad focus management
-                                    TvButton(
-                                        onClick = { onTimingAdjust(adjustment) },
-                                        modifier = Modifier
-                                            .animatedProfileBorder(
-                                                borderWidth = 2.dp,
-                                                interactionSource = timingButtonInteractionSource
-                                            )
-                                            .hoverable(timingButtonInteractionSource)
-                                            .focusable(interactionSource = timingButtonInteractionSource)
-                                            .onFocusChanged { timingButtonHovered = it.isFocused },
-                                        colors = TvButtonDefaults.colors(
-                                            containerColor = (if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981)).copy(alpha = 0.3f),
-                                            focusedContainerColor = if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981),
-                                            contentColor = Color.White
-                                        )
-                                    ) {
-                                        Text(label, fontSize = 12.sp)
-                                    }
+                                        .hoverable(timingButtonInteractionSource)
+                                        .focusable(enabled = isEnabled, interactionSource = timingButtonInteractionSource)
+                                        .onFocusChanged { timingButtonHovered = it.isFocused }
+                                        .height(36.dp)
+                                        .width(58.dp),
+                                    colors = TvButtonDefaults.colors(
+                                        containerColor = (if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981)),
+                                        focusedContainerColor = if (adjustment < 0) Color(0xFFDC2626) else Color(0xFF059669),
+                                        contentColor = Color.White,
+                                        disabledContainerColor = (if (adjustment < 0) Color(0xFFEF4444) else Color(0xFF10B981)).copy(alpha = 0.1f),
+                                        disabledContentColor = Color.White.copy(alpha = 0.2f)
+                                    )
+                                ) {
+                                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1358,10 +1447,10 @@ fun GearMenuDialog(
                 }
                 
                 // Filter Settings Section
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "Profanity Filter Level",
-                        fontSize = if (isMobile) 10.sp else 14.sp,
+                        fontSize = if (isMobile) 12.sp else 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White
                     )
@@ -1410,7 +1499,11 @@ fun GearMenuDialog(
                                         onFilterLevelChange(level)
                                     }
                                 },
-                                enabled = isFilterEditable
+                                enabled = isFilterEditable,
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = Color(0xFF8B5CF6),
+                                    unselectedColor = Color.Gray
+                                )
                             )
                             
                             Spacer(modifier = Modifier.width(8.dp))
@@ -1555,5 +1648,27 @@ private fun formatTime(milliseconds: Long): String {
         String.format("%02d:%02d:%02d", hours, minutes, seconds)
     } else {
         String.format("%02d:%02d", minutes, seconds)
+    }
+}
+
+@Composable
+fun SecurityPadlock(
+    isContentProtected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .background(
+                color = if (isContentProtected) Color(0xFF10B981).copy(alpha = 0.8f) else Color(0xFFEF4444).copy(alpha = 0.8f),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(8.dp)
+    ) {
+        Icon(
+            if (isContentProtected) Icons.Default.Lock else Icons.Default.LockOpen,
+            contentDescription = if (isContentProtected) "Content Protected" else "Content Not Protected",
+            tint = Color.White,
+            modifier = Modifier.size(16.dp)
+        )
     }
 }

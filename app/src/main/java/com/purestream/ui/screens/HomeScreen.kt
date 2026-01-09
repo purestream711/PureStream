@@ -458,8 +458,11 @@ fun SimpleHeroSection(
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = if (isMobile) 24.dp else 32.dp, bottom = 40.dp)
-                        .widthIn(max = 700.dp)
+                        .padding(bottom = 40.dp)
+                        .then(
+                            if (isMobile) Modifier.fillMaxWidth() 
+                            else Modifier.padding(start = 32.dp).widthIn(max = 700.dp)
+                        )
                         .clickable(
                             enabled = isMobile, // Disable on TV to prevent it from stealing focus (Timbuktu issue)
                             interactionSource = remember { MutableInteractionSource() },
@@ -507,6 +510,7 @@ fun SimpleHeroSection(
                     } else {
                         Text(
                             text = featuredContent.title,
+                            modifier = if (isMobile) Modifier.padding(horizontal = 24.dp) else Modifier,
                             fontSize = if (isMobile) 32.sp else 36.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White,
@@ -516,6 +520,7 @@ fun SimpleHeroSection(
                     }
         
                     Row(
+                        modifier = if (isMobile) Modifier.padding(horizontal = 24.dp) else Modifier,
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(if (isMobile) 16.dp else 12.dp)
                     ) {
@@ -566,7 +571,7 @@ fun SimpleHeroSection(
         
                     Text(
                         featuredContent.summary ?: "",
-                        modifier = if (isMobile) Modifier else Modifier.fillMaxWidth(0.65f),
+                        modifier = if (isMobile) Modifier.padding(horizontal = 24.dp) else Modifier.fillMaxWidth(0.65f),
                         fontSize = if (isMobile) 16.sp else 12.sp,
                         color = Color.White.copy(alpha = 0.8f),
                         maxLines = 3,
@@ -579,7 +584,7 @@ fun SimpleHeroSection(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(top = 8.dp)
+                        modifier = Modifier.padding(top = 8.dp).then(if (isMobile) Modifier.padding(horizontal = 24.dp) else Modifier)
                     ) {
                         // Resume/Play Button
                         Surface(

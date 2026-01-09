@@ -1163,7 +1163,9 @@ fun PureStreamApp(
                             heroState.movie?.let { movie ->
                                 // Auto-trigger analysis in background if not done
                                 if (heroState.canAnalyzeProfanity) {
-                                    sharedHeroMovieDetailsViewModel.analyzeMovieProfanityAllLevels(movie)
+                                    // Use current profile's filter level as priority for faster padlock update
+                                    val priorityLevel = homeState.currentProfile?.profanityFilterLevel ?: com.purestream.data.model.ProfanityFilterLevel.MILD
+                                    sharedHeroMovieDetailsViewModel.analyzeMovieProfanityAllLevels(movie, priorityLevel)
                                 }
 
                                 // Set start position
@@ -1571,26 +1573,6 @@ fun PureStreamApp(
                 onSettingToggle = { setting, value ->
                     // App setting toggles not yet implemented - handled by SettingsViewModel
                 },
-                onMuteDurationChange = { newDuration ->
-                    homeState.currentProfile?.let { profile ->
-                        val updatedProfile = profile.copy(audioMuteDuration = newDuration)
-                        sharedHomeViewModel.setCurrentProfile(updatedProfile)
-                        
-                        val profileManager = ProfileManager.getInstance(context)
-                        coroutineScope.launch {
-                            profileManager.setCurrentProfile(updatedProfile)
-                        }
-                        
-                        val profileRepository = com.purestream.data.repository.ProfileRepository(context)
-                        coroutineScope.launch {
-                            try {
-                                profileRepository.updateProfile(updatedProfile)
-                            } catch (e: Exception) {
-                                android.util.Log.e("MainActivity", "Failed to update profile: ${e.message}")
-                            }
-                        }
-                    }
-                },
                 onAddCustomProfanity = { word ->
                     homeState.currentProfile?.let { profile ->
                         val updatedCustomWords = (profile.customFilteredWords + word).distinct()
@@ -1973,9 +1955,11 @@ fun PureStreamApp(
                         
                         // Auto-trigger analysis in background if not done
                         if (movieDetailsState.canAnalyzeProfanity) {
-                            movieDetailsViewModel.analyzeMovieProfanityAllLevels(movie)
+                            // Use current profile's filter level as priority for faster padlock update
+                            val priorityLevel = activeProfile?.profanityFilterLevel ?: com.purestream.data.model.ProfanityFilterLevel.MILD
+                            movieDetailsViewModel.analyzeMovieProfanityAllLevels(movie, priorityLevel)
                         }
-                        
+
                         // NAVIGATE INSTANTLY - the player will fetch the URL while the screen is opening
                         navController.navigate(Destinations.mediaPlayer(movie.ratingKey, "movie"))
                     },
@@ -1983,8 +1967,9 @@ fun PureStreamApp(
                         navController.popBackStack()
                     },
                     onAnalyzeProfanityClick = { movieToAnalyze ->
-                        // Use the new method that generates analysis for all filter levels at once
-                        movieDetailsViewModel.analyzeMovieProfanityAllLevels(movieToAnalyze)
+                        // Use current profile's filter level as priority for faster padlock update
+                        val priorityLevel = activeProfile?.profanityFilterLevel ?: com.purestream.data.model.ProfanityFilterLevel.MILD
+                        movieDetailsViewModel.analyzeMovieProfanityAllLevels(movieToAnalyze, priorityLevel)
                     },
                     isAnalyzingSubtitles = movieDetailsState.isAnalyzingSubtitles,
                     subtitleAnalysisResult = movieDetailsState.subtitleAnalysisResult,
@@ -2546,7 +2531,9 @@ fun PureStreamApp(
 
                         // Auto-trigger analysis in background if not done
                         if (tvShowDetailsState.canAnalyzeProfanity) {
-                            tvShowDetailsViewModel.analyzeEpisodeProfanityAllLevels(episode)
+                            // Use current profile's filter level as priority for faster padlock update
+                            val priorityLevel = activeProfile?.profanityFilterLevel ?: com.purestream.data.model.ProfanityFilterLevel.MILD
+                            tvShowDetailsViewModel.analyzeEpisodeProfanityAllLevels(episode, priorityLevel)
                         }
 
                         // Navigate instantly
@@ -2557,8 +2544,8 @@ fun PureStreamApp(
                         navController.popBackStack()
                     },
                     onAnalyzeProfanityClick = { episodeToAnalyze ->
-                        // Use the new automated search and analysis method with current profile's filter level
-                        tvShowDetailsViewModel.analyzeEpisodeProfanity(episodeToAnalyze, currentFilterLevel)
+                        // Use progressive analysis to analyze all filter levels with current level as priority
+                        tvShowDetailsViewModel.analyzeEpisodeProfanityAllLevels(episodeToAnalyze, currentFilterLevel)
                     },
                     isAnalyzingSubtitles = tvShowDetailsState.isAnalyzingSubtitles,
                     subtitleAnalysisResult = tvShowDetailsState.subtitleAnalysisResult,

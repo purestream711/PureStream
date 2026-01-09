@@ -20,6 +20,7 @@ data class TvShowEntity(
     val summary: String?,
     val thumbUrl: String?,
     val artUrl: String?,
+    val theme: String?,
     val year: Int?,
     val rating: Float?,
     val contentRating: String?,
