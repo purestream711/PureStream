@@ -14,8 +14,8 @@ android {
         applicationId = "com.purestream"
         minSdk = 28
         targetSdk = 35
-        versionCode = 103
-        versionName = "1.4.6"
+        versionCode = 105
+        versionName = "1.4.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
